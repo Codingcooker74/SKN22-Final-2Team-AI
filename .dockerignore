@@ -1,0 +1,20 @@
+# 환경 변수
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 런타임 생성 파일
+*.log
+
+# 테스트
+tests/
