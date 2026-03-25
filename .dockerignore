@@ -2,6 +2,14 @@
 .env
 .env.*
 
+# Git / editor
+.git
+.gitignore
+.dockerignore
+.idea/
+.vscode/
+.DS_Store
+
 # Python
 .venv/
 venv/
@@ -12,6 +20,15 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+build/
+dist/
+*.egg-info/
 
 # 런타임 생성 파일
 *.log
