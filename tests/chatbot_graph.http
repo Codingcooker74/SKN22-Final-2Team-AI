@@ -1,0 +1,404 @@
+### =============================================================================
+### TailTalk AI - LangGraph 챗봇 파이프라인 전체 경로 테스트
+### =============================================================================
+### 테스트 대상: POST /api/chat/
+### 그래프 경로:
+###   1. INTENT → CLARIFY → END (unclear / 정보 부족)
+###   2. INTENT → GENERAL → RAG → MERGE → RESPOND → END (domain_qa)
+###   3. INTENT → PROFILE → QUERY → SEARCH → RERANK → MERGE → RESPOND → END (recommend)
+###   4. INTENT → [GENERAL + PROFILE 병렬] → MERGE → RESPOND → END (domain_qa + recommend)
+###   5. RERANK → QUERY 루프 (필터 완화 재검색)
+### =============================================================================
+
+@host = http://localhost:8000
+
+
+### ---------------------------------------------------------------------------
+### 1-1. unclear: 인사/잡담 → CLARIFY → END
+### 예상: intents=["unclear"], 재질문 응답
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "안녕하세요 반가워요!",
+  "thread_id": "test-unclear-greeting"
+}
+
+### ---------------------------------------------------------------------------
+### 1-2. unclear: 무관한 질문 → CLARIFY → END
+### 예상: intents=["unclear"], 서비스 안내 재질문
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "오늘 날씨 어때?",
+  "thread_id": "test-unclear-irrelevant"
+}
+
+### ---------------------------------------------------------------------------
+### 1-3. CLARIFY: recommend 의도이나 pet_type 누락 → 재질문
+### 예상: intents=["recommend"], pet_type 없음 → "강아지인가요, 고양이인가요?"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "사료 추천해줘",
+  "thread_id": "test-clarify-no-pet-type"
+}
+
+### ---------------------------------------------------------------------------
+### 1-4. CLARIFY: recommend + pet_type 있으나 category 누락 → 재질문
+### 예상: intents=["recommend"], category 없음 → "어떤 상품을 찾으시나요?"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "우리 강아지한테 뭐 좋은 거 없을까?",
+  "thread_id": "test-clarify-no-category",
+  "pet_profile": { "species": "dog", "breed": "포메라니안", "age": 3 }
+}
+
+
+### ===========================================================================
+### 2. domain_qa 경로: INTENT → GENERAL → RAG → MERGE → RESPOND → END
+### ===========================================================================
+
+### ---------------------------------------------------------------------------
+### 2-1. domain_qa (health_disease): 질병 관련 질문
+### 예상: intents=["domain_qa"], domain_intent="health_disease"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지 눈물 자국이 왜 생기는 건가요?",
+  "thread_id": "test-domain-health",
+  "pet_profile": { "species": "dog", "breed": "포메라니안", "age": 3 }
+}
+
+### ---------------------------------------------------------------------------
+### 2-2. domain_qa (nutrition_diet): 영양/식단 질문
+### 예상: intents=["domain_qa"], domain_intent="nutrition_diet"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "고양이가 하루에 얼마나 물을 마셔야 하나요?",
+  "thread_id": "test-domain-nutrition",
+  "pet_profile": { "species": "cat", "breed": "러시안블루", "age": 5 }
+}
+
+### ---------------------------------------------------------------------------
+### 2-3. domain_qa (behavior_psychology): 행동/심리 질문
+### 예상: intents=["domain_qa"], domain_intent="behavior_psychology"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지가 계속 짖는 이유가 뭘까요?",
+  "thread_id": "test-domain-behavior",
+  "pet_profile": { "species": "dog" }
+}
+
+### ---------------------------------------------------------------------------
+### 2-4. domain_qa (care_management): 사육/관리 질문
+### 예상: intents=["domain_qa"], domain_intent="care_management"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "고양이 목욕은 얼마나 자주 시켜야 하나요?",
+  "thread_id": "test-domain-care",
+  "pet_profile": { "species": "cat" }
+}
+
+### ---------------------------------------------------------------------------
+### 2-5. domain_qa (travel): 여행/이동 질문
+### 예상: intents=["domain_qa"], domain_intent="travel"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지 데리고 비행기 탈 때 주의할 점이 뭐에요?",
+  "thread_id": "test-domain-travel",
+  "pet_profile": { "species": "dog", "breed": "말티즈", "age": 2 }
+}
+
+
+### ===========================================================================
+### 3. recommend 경로: INTENT → PROFILE → QUERY → SEARCH → RERANK → MERGE → RESPOND → END
+### ===========================================================================
+
+### ---------------------------------------------------------------------------
+### 3-1. recommend 기본: 카테고리 명확한 추천
+### 예상: intents=["recommend"], category="사료"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "포메라니안 눈물 자국용 사료 추천해줘",
+  "thread_id": "test-recommend-basic",
+  "pet_profile": { "species": "dog", "breed": "포메라니안", "age": 3 }
+}
+
+### ---------------------------------------------------------------------------
+### 3-2. recommend + 알레르기 필터: must_not + OCR post-filter
+### 예상: 닭고기 포함 상품 제외
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지 사료 추천해줘",
+  "thread_id": "test-recommend-allergy",
+  "pet_profile": { "species": "dog", "breed": "골든리트리버", "age": 5 },
+  "health_concerns": ["피부"],
+  "allergies": ["닭고기", "소고기"]
+}
+
+### ---------------------------------------------------------------------------
+### 3-3. recommend + 예산 필터: price range
+### 예상: budget 필터 적용 (30000원 이하)
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "3만원 이하 고양이 간식 추천해줘",
+  "thread_id": "test-recommend-budget",
+  "pet_profile": { "species": "cat", "breed": "페르시안", "age": 4 }
+}
+
+### ---------------------------------------------------------------------------
+### 3-4. recommend + 서브카테고리 명시: subcategory 필터
+### 예상: category="간식", subcategory="덴탈껌"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지 덴탈껌 추천해줘",
+  "thread_id": "test-recommend-subcategory",
+  "pet_profile": { "species": "dog", "breed": "비숑프리제", "age": 2 }
+}
+
+### ---------------------------------------------------------------------------
+### 3-5. recommend + 건강관심사: health_concerns 반영
+### 예상: profile_node에서 health_keywords 보완, 검색에 반영
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "관절에 좋은 사료 추천해주세요",
+  "thread_id": "test-recommend-health",
+  "pet_profile": { "species": "dog", "breed": "래브라도 리트리버", "age": 8, "weight": 30 },
+  "health_concerns": ["관절", "체중조절"]
+}
+
+### ---------------------------------------------------------------------------
+### 3-6. recommend 고양이: 모래 카테고리
+### 예상: category="모래"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "고양이 두부모래 추천해줘",
+  "thread_id": "test-recommend-cat-litter",
+  "pet_profile": { "species": "cat", "breed": "스코티시폴드", "age": 3 }
+}
+
+
+### ===========================================================================
+### 4. domain_qa + recommend 복합 경로 (Send 병렬 fan-out)
+### INTENT → [GENERAL + PROFILE 병렬] → MERGE → RESPOND → END
+### ===========================================================================
+
+### ---------------------------------------------------------------------------
+### 4-1. 복합: 질병 질문 + 상품 추천 동시
+### 예상: intents=["domain_qa", "recommend"], 병렬 처리
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지 눈물 자국 왜 생겨? 좋은 사료도 알려줘",
+  "thread_id": "test-combined-health-recommend",
+  "pet_profile": { "species": "dog", "breed": "말티즈", "age": 4 }
+}
+
+### ---------------------------------------------------------------------------
+### 4-2. 복합: 영양 질문 + 간식 추천
+### 예상: intents=["domain_qa", "recommend"], domain_intent="nutrition_diet"
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "고양이 음수량 늘리는 방법이랑 습식 사료 추천해줘",
+  "thread_id": "test-combined-nutrition-recommend",
+  "pet_profile": { "species": "cat", "breed": "브리티시숏헤어", "age": 6 },
+  "health_concerns": ["요로기계"]
+}
+
+### ---------------------------------------------------------------------------
+### 4-3. 복합 + 알레르기 + 예산 필터
+### 예상: 도메인 지식 + 필터링된 상품 추천
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "피부 알레르기 있는 강아지한테 좋은 성분이 뭐야? 3만원 이하 사료도 추천해줘",
+  "thread_id": "test-combined-allergy-budget",
+  "pet_profile": { "species": "dog", "breed": "시바견", "age": 5 },
+  "health_concerns": ["피부"],
+  "allergies": ["닭고기"],
+  "food_preferences": ["연어"]
+}
+
+
+### ===========================================================================
+### 5. RERANK → QUERY 루프 (필터 완화 재검색) 유도
+### ===========================================================================
+
+### ---------------------------------------------------------------------------
+### 5-1. 필터 완화 유도: 매우 좁은 서브카테고리
+### 예상: 첫 검색 결과 < 3개 → subcategory 제거 후 QUERY 재시도
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "유통기한 임박 강아지 처방식 사료 중에 눈물 자국용 있어?",
+  "thread_id": "test-rerank-loop-narrow",
+  "pet_profile": { "species": "dog", "breed": "푸들", "age": 10 },
+  "health_concerns": ["눈/눈물"],
+  "allergies": ["옥수수", "밀"]
+}
+
+### ---------------------------------------------------------------------------
+### 5-2. 필터 완화 유도: 희귀 카테고리 + 다중 알레르기
+### 예상: 후보 매우 적음 → 필터 완화 루프 작동
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "고양이 묘종별 시니어 처방식 사료 추천해줘",
+  "thread_id": "test-rerank-loop-rare",
+  "pet_profile": { "species": "cat", "breed": "터키시앙고라", "age": 12 },
+  "health_concerns": ["요로기계", "체중조절"],
+  "allergies": ["닭고기", "소고기", "옥수수"]
+}
+
+
+### ===========================================================================
+### 6. 엣지 케이스
+### ===========================================================================
+
+### ---------------------------------------------------------------------------
+### 6-1. pet_profile 없이 추천 요청
+### 예상: intent에서 pet_type 추출 시도, 실패 시 CLARIFY
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "사료 추천해줘",
+  "thread_id": "test-edge-no-profile"
+}
+
+### ---------------------------------------------------------------------------
+### 6-2. 빈 메시지
+### 예상: unclear → CLARIFY
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "",
+  "thread_id": "test-edge-empty"
+}
+
+### ---------------------------------------------------------------------------
+### 6-3. 동일 thread_id 멀티턴 - 1턴: 재질문 유도
+### 예상: CLARIFY 후 대화 히스토리 유지 (MemorySaver)
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "사료 추천해줘",
+  "thread_id": "test-multiturn-session"
+}
+
+### ---------------------------------------------------------------------------
+### 6-4. 동일 thread_id 멀티턴 - 2턴: 재질문 응답
+### 예상: 이전 턴 context 유지, intent 재분류 → recommend 경로
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "강아지 사료야",
+  "thread_id": "test-multiturn-session"
+}
+
+### ---------------------------------------------------------------------------
+### 6-5. 매우 긴 입력
+### 예상: 정상 처리 (intent 분류 → 적절한 경로)
+### ---------------------------------------------------------------------------
+
+POST {{host}}/api/chat/
+Content-Type: application/json
+
+{
+  "message": "저희 집 강아지가 3살 포메라니안인데요, 눈물 자국이 심하고 피부도 좀 안 좋아서 사료를 바꿔보려고 합니다. 지금은 A 브랜드 사료를 먹고 있는데 닭고기가 주원료라서 알레르기가 있는 것 같아요. 연어나 오리 기반 사료로 바꾸고 싶은데 눈물 자국에도 좋고 피부에도 좋은 사료가 있을까요? 가격은 5만원 이하면 좋겠습니다.",
+  "thread_id": "test-edge-long-input",
+  "pet_profile": { "species": "dog", "breed": "포메라니안", "age": 3, "weight": 4 },
+  "health_concerns": ["눈/눈물", "피부/모질"],
+  "allergies": ["닭고기"],
+  "food_preferences": ["연어", "오리"]
+}
+
+
+### ===========================================================================
+### 7. 헬스체크
+### ===========================================================================
+
+GET {{host}}/health
