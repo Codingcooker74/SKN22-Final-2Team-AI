@@ -1,0 +1,38 @@
+name: Notify Web Repo
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Notify web repository to sync submodule
+        env:
+          WEB_REPO_DISPATCH_TOKEN: ${{ secrets.WEB_REPO_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${WEB_REPO_DISPATCH_TOKEN}" ]; then
+            echo "WEB_REPO_DISPATCH_TOKEN secret is not configured."
+            exit 1
+          fi
+
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${WEB_REPO_DISPATCH_TOKEN}" \
+            https://api.github.com/repos/skn-ai22-251029/SKN22-Final-2Team-WEB/dispatches \
+            -d '{
+              "event_type": "fastapi-updated",
+              "client_payload": {
+                "branch": "develop",
+                "sha": "'"${{ github.event.pull_request.merge_commit_sha }}"'"
+              }
+            }'
