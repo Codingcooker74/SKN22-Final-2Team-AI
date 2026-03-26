@@ -3,9 +3,59 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
-from pipeline.utils import llm, LLM_MODEL, qdrant, hybrid_search, build_pet_context, DOMAIN_INTENT_TO_CATEGORY
+from pipeline.utils import llm, LLM_MODEL, get_db_connection, build_pet_context, DOMAIN_INTENT_TO_CATEGORY
 from pipeline.state import ChatState
+
+
+def _search_domain_pg(query: str, domain_intent: str | None, species: str | None) -> list[str]:
+    """
+    데이터 CSV 기반 QA를 PostgreSQL을 통해 검색하거나, 
+    키워드 기반으로 직접 CSV 파일에서 검색합니다.
+    """
+    import pandas as pd
+    from pathlib import Path
+
+    # CSV 파일 경로 (test/data → pipeline/data 순으로 탐색)
+    base = Path(__file__).resolve().parents[3]
+    csv_candidates = [
+        base / "test" / "data" / "merged_QnA_final.csv",
+        Path(__file__).resolve().parents[1] / "data" / "merged_QnA_final.csv",
+    ]
+    csv_path = next((p for p in csv_candidates if p.exists()), None)
+
+    if csv_path is None:
+        print("[RAG] CSV 파일을 찾을 수 없습니다.")
+        return []
+
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f"[RAG] CSV 로드 실패: {e}")
+        return []
+
+    # 종 필터 (강아지/고양이)
+    if species:
+        species_kr = "강아지" if species == "dog" else "고양이"
+        if "분류" in df.columns:
+            df = df[df["분류"].astype(str).str.contains(species_kr, na=False)]
+
+    # 키워드 기반 매칭
+    keywords = [k for k in query.split() if len(k) > 1]
+    if keywords and "질문" in df.columns:
+        mask = df["질문"].str.contains("|".join(keywords), na=False)
+        candidates = df[mask].head(5)
+    else:
+        candidates = df.head(5)
+
+    contexts = []
+    for _, row in candidates.iterrows():
+        q = row.get("질문", "")
+        a = row.get("답변", "")
+        if q or a:
+            contexts.append(f"질문: {q}\n답변: {a}")
+
+    print(f"[RAG] {len(contexts)}개 컨텍스트 (csv={csv_path.name})")
+    return contexts
 
 
 def general_node(state: ChatState) -> dict:
@@ -26,25 +76,10 @@ def general_node(state: ChatState) -> dict:
 
 
 def rag_node(state: ChatState) -> dict:
-    """domain_qna Hybrid Search (species + category 필터)"""
+    """CSV 기반 domain_qna 검색 (Qdrant 제거 → CSV 키워드 매칭)"""
     query         = state.get("search_query") or state["user_input"]
     domain_intent = state.get("domain_intent")
     species       = (state.get("pet_profile") or {}).get("species")
 
-    must = []
-    if species:
-        must.append(FieldCondition(key="species", match=MatchAny(any=[species, "both"])))
-    if domain_intent in DOMAIN_INTENT_TO_CATEGORY:
-        must.append(FieldCondition(
-            key="category",
-            match=MatchValue(value=DOMAIN_INTENT_TO_CATEGORY[domain_intent]),
-        ))
-    f = Filter(must=must) if must else None
-
-    points   = hybrid_search("domain_qna", query, top_k=5, qdrant_filter=f)
-    contexts = [
-        f"{p.payload.get('question', '')}\n{p.payload.get('answer', '')}".strip()
-        for p in points
-    ]
-    print(f"[RAG] {len(contexts)}개 컨텍스트 (domain_intent={domain_intent})")
+    contexts = _search_domain_pg(query, domain_intent, species)
     return {"domain_contexts": contexts}

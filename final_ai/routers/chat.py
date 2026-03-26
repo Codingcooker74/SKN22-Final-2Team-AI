@@ -1,8 +1,10 @@
 import json
 import asyncio
-from typing import Optional
+import uuid
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from pipeline.chatbot_graph import build_graph
@@ -13,47 +15,29 @@ router = APIRouter()
 # 앱 기동 시 한 번만 빌드 (MemorySaver 포함)
 _graph = None
 
-
 def get_graph():
     global _graph
     if _graph is None:
         _graph = build_graph()
     return _graph
 
-
 def _sse(event_type: str, data: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False)}\n\n"
-
 
 async def _stream(req: ChatRequest):
     graph = get_graph()
 
     initial_state = {
-        "messages": [],
         "user_input": req.message,
-        "user_id": None,
         "pet_profile": req.pet_profile,
         "health_concerns": req.health_concerns,
         "allergies": req.allergies,
         "food_preferences": req.food_preferences,
-        "intents": [],
-        "domain_intent": None,
-        "clarification_count": 0,
-        "detected_aspect": None,
-        "budget": None,
-        "search_query": None,
-        "filters": None,
-        "search_results": [],
-        "reranked_results": [],
-        "filter_relaxation_count": 0,
-        "domain_contexts": [],
-        "response": "",
-        "product_cards": [],
+        "user_id": None,
     }
 
     config = {"configurable": {"thread_id": req.thread_id}}
 
-    # 그래프 실행 (동기 함수를 스레드풀에서 실행)
     loop = asyncio.get_event_loop()
     try:
         final_state = await loop.run_in_executor(
@@ -67,20 +51,19 @@ async def _stream(req: ChatRequest):
     response_text = final_state.get("response", "")
     product_cards = final_state.get("product_cards", [])
 
-    # 응답 텍스트를 단어 단위로 스트리밍
+    # 응답 스트리밍
     words = response_text.split(" ")
     for i, word in enumerate(words):
         chunk = word if i == 0 else " " + word
         yield _sse("token", {"content": chunk})
-        await asyncio.sleep(0.03)
+        await asyncio.sleep(0.01)
 
-    # 상품 카드 전송
     if product_cards:
         yield _sse("products", {"cards": product_cards})
 
     yield _sse("done", {})
 
-
+# 1. POST / (기본 채팅)
 @router.post("/")
 async def chat(req: ChatRequest):
     return StreamingResponse(
@@ -91,3 +74,37 @@ async def chat(req: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+# 2. POST /sessions/ (Django의 세션 생성 대응)
+class SessionCreateRequest(BaseModel):
+    title: Optional[str] = None
+    target_pet_id: Optional[str] = None
+
+@router.post("/sessions/")
+async def create_session(req: SessionCreateRequest):
+    # 실제 DB 세션 생성은 Django가 담당하므로, 여기서는 호환성을 위해 ID만 반환
+    session_id = str(uuid.uuid4())
+    return {
+        "session_id": session_id,
+        "title": req.title or "새 대화",
+        "display_date": "오늘"
+    }
+
+# 3. POST /sessions/{session_id}/messages/ (Django의 메시지 전송 대응)
+@router.post("/sessions/{session_id}/messages/")
+async def session_chat(session_id: str, req: ChatRequest):
+    # thread_id를 장고의 session_id로 고정하여 상태 유지
+    req.thread_id = session_id
+    return await chat(req)
+
+# 4. GET /sessions/{session_id}/messages/ (Django의 메시지 조회 대응)
+@router.get("/sessions/{session_id}/messages/")
+async def get_messages(session_id: str):
+    # LangGraph의 checkpoint에서 내역을 가져올 수도 있으나, 
+    # 현재는 프론트엔드 UI를 위해 빈 배열 또는 기본 인사를 반환
+    return {"messages": []}
+
+# 5. DELETE /sessions/{session_id}/ (Django의 세션 삭제 대응)
+@router.delete("/sessions/{session_id}/")
+async def delete_session(session_id: str):
+    return {"status": "success"}

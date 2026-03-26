@@ -37,11 +37,14 @@ health_disease / care_management / nutrition_diet / behavior_psychology / travel
 
 def intent_node(state: ChatState) -> dict:
     user_input = state["user_input"]
+    prev_intents = state.get("intents") or []
+    prev_filters = state.get("filters") or {}
 
     context = ""
-    if state.get("clarification_count", 0) > 0 and state.get("intents"):
-        prev = {k: state.get(k) for k in ["intents", "filters"]}
-        context = f"\n이전 추출 정보: {json.dumps(prev, ensure_ascii=False)}"
+    # 재질문 중이거나 이전 의도가 있는 경우 컨텍스트 제공
+    if (state.get("clarification_count", 0) > 0 or prev_intents) and user_input:
+        prev_data = {"intents": prev_intents, "filters": prev_filters}
+        context = f"\n이전 추출 정보: {json.dumps(prev_data, ensure_ascii=False)}"
 
     res = llm.chat.completions.create(
         model=LLM_MODEL,
@@ -53,22 +56,35 @@ def intent_node(state: ChatState) -> dict:
         temperature=0,
     )
     r = json.loads(res.choices[0].message.content)
-    print(f"[INTENT] {r}")
+    
+    # [Merge Logic] 기존 정보와 새 추출 정보 병합
+    new_intents = r.get("intents") or []
+    
+    # 만약 현재 답변이 "강아지", "사료" 같이 짧은 슬롯 채우기성 답변이라면 
+    # 이전 의도(recommend/domain_qa)를 유지할 확률이 높음
+    if not any(i in ["recommend", "domain_qa"] for i in new_intents):
+        if "recommend" in prev_intents:
+            new_intents = ["recommend"]
+        elif "domain_qa" in prev_intents:
+            new_intents = ["domain_qa"]
+
+    new_filters = prev_filters.copy()
+    for k in ["pet_type", "category", "subcategory"]:
+        if r.get(k):
+            new_filters[k] = r[k]
+
+    print(f"[INTENT] original={r}, merged_intents={new_intents}, merged_filters={new_filters}")
 
     pet_profile = dict(state.get("pet_profile") or {})
-    if r.get("pet_type") and not pet_profile.get("species"):
-        pet_profile["species"] = "dog" if r["pet_type"] == "강아지" else "cat"
+    if new_filters.get("pet_type") and not pet_profile.get("species"):
+        pet_profile["species"] = "dog" if new_filters["pet_type"] == "강아지" else "cat"
 
     return {
-        "intents":        r.get("intents") or ["unclear"],
-        "domain_intent":  r.get("domain_intent"),
-        "detected_aspect": r.get("detected_aspect"),
-        "budget":         int(r["budget"]) if r.get("budget") else None,
-        "filters": {
-            "pet_type":    r.get("pet_type"),
-            "category":    r.get("category"),
-            "subcategory": r.get("subcategory"),
-        },
+        "intents":        new_intents or ["unclear"],
+        "domain_intent":  r.get("domain_intent") or state.get("domain_intent"),
+        "detected_aspect": r.get("detected_aspect") or state.get("detected_aspect"),
+        "budget":         int(r["budget"]) if r.get("budget") else state.get("budget"),
+        "filters":        new_filters,
         "pet_profile":             pet_profile,
-        "filter_relaxation_count": 0,
+        "filter_relaxation_count": state.get("filter_relaxation_count", 0),
     }
