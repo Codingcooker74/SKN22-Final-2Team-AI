@@ -12,7 +12,6 @@ from pipeline.state import ChatState
 def profile_node(state: ChatState) -> dict:
     """
     breed_meta 조회 대신 pet_profile에서 species 및 health_concerns를 그대로 활용.
-    (Qdrant 제거로 breed_meta 검색 불필요)
     """
     pet_profile = dict(state.get("pet_profile") or {})
     health_concerns = list(state.get("health_concerns") or [])
