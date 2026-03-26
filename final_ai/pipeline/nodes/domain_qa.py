@@ -76,7 +76,7 @@ def general_node(state: ChatState) -> dict:
 
 
 def rag_node(state: ChatState) -> dict:
-    """CSV 기반 domain_qna 검색 (Qdrant 제거 → CSV 키워드 매칭)"""
+    """CSV 기반 domain_qna 검색"""
     query         = state.get("search_query") or state["user_input"]
     domain_intent = state.get("domain_intent")
     species       = (state.get("pet_profile") or {}).get("species")

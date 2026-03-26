@@ -1,5 +1,13 @@
+import sys
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+FINAL_AI_DIR = Path(__file__).resolve().parent / "final_ai"
+if str(FINAL_AI_DIR) not in sys.path:
+    sys.path.insert(0, str(FINAL_AI_DIR))
+
 from routers import chat, recommend, products
 
 app = FastAPI(title="TailTalk API")
