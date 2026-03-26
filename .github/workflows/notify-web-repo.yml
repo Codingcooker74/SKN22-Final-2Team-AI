@@ -1,9 +1,7 @@
 name: Notify Web Repo
 
 on:
-  pull_request:
-    types:
-      - closed
+  push:
     branches:
       - develop
 
@@ -12,7 +10,6 @@ permissions:
 
 jobs:
   dispatch:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +30,6 @@ jobs:
               "event_type": "fastapi-updated",
               "client_payload": {
                 "branch": "develop",
-                "sha": "'"${{ github.event.pull_request.merge_commit_sha }}"'"
+                "sha": "'"${{ github.sha }}"'"
               }
             }'
