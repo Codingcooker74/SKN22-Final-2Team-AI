@@ -178,4 +178,6 @@ def build_pet_context(state: ChatState) -> str:
         parts.append(f"건강관심사: {', '.join(state['health_concerns'])}")
     if state.get("allergies"):
         parts.append(f"알레르기: {', '.join(state['allergies'])}")
+    if state.get("food_preferences"):
+        parts.append(f"선호사료타입: {', '.join(state['food_preferences'])}")
     return " / ".join(parts) if parts else "펫 프로필 없음"

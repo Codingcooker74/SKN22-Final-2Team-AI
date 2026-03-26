@@ -33,10 +33,38 @@ async def _stream(req: ChatRequest):
         "health_concerns": req.health_concerns,
         "allergies": req.allergies,
         "food_preferences": req.food_preferences,
-        "user_id": None,
+        "user_id": req.user_id,
     }
 
     config = {"configurable": {"thread_id": req.thread_id}}
+
+    # [추가] LLM이 응답을 생성하는 동안 보여줄 실시간 멘트 (DB 실제 이름 조회)
+    pet_name = "우리 아이"
+    if req.user_id:
+        try:
+            from pipeline.utils import get_db_connection
+            import psycopg2.extras
+            conn = get_db_connection()
+            # 펫 테이블에서 user_id에 해당하는 진짜 이름을 가져옵니다.
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute("SELECT name FROM pet WHERE user_id = %s ORDER BY created_at DESC LIMIT 1", (req.user_id,))
+                row = cur.fetchone()
+                if row and row["name"]:
+                    pet_name = row["name"]  # DB에 저장된 실제 이름 (예: 초코)
+            conn.close()
+        except Exception as e:
+            print(f"[CHAT_ROUTER] 펫 이름 조회 중 오류: {e}")
+    
+    # 카테고리 추출
+    category = "상품"
+    if req.message:
+        if "사료" in req.message:   category = "사료"
+        elif "간식" in req.message: category = "간식"
+        elif "영양제" in req.message: category = "영양제"
+        elif "용품" in req.message: category = "용품"
+
+    # 제일 먼저 실시간 멘트 전송 (name에 DB의 실제 이름이 들어감)
+    yield _sse("token", {"content": f"{pet_name}에 어울리는 {category}를 찾는 중입니다...\n\n"})
 
     loop = asyncio.get_event_loop()
     try:
