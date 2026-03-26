@@ -17,6 +17,15 @@ app.include_router(recommend.router, prefix="/api/recommend", tags=["recommend"]
 app.include_router(products.router, prefix="/api/products", tags=["products"])
 
 
+@app.get("/")
+def root():
+    return {
+        "service": "TailTalk API",
+        "status": "ok",
+        "health": "/health",
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
