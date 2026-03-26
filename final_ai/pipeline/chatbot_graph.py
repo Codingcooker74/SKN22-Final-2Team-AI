@@ -16,21 +16,30 @@ from pipeline.nodes.respond  import respond_node
 def route_intent(state: ChatState):
     """
     INTENT → 조건부 분기.
-    - unclear → CLARIFY
-    - domain_qa → GENERAL (또는 GENERAL + PROFILE 동시 via Send)
-    - recommend → PROFILE
-    - domain_qa + recommend → Send 병렬 fan-out
     """
     intents = state.get("intents") or ["unclear"]
+    filters = state.get("filters") or {}
+    pet_profile = state.get("pet_profile") or {}
+    relaxation = state.get("filter_relaxation_count", 0)
+
+    print(f"[ROUTE_INTENT] intents={intents}, pet_type={filters.get('pet_type')}, species={pet_profile.get('species')}, category={filters.get('category')}")
 
     if "unclear" in intents:
         return "clarify"
 
-    has_domain  = "domain_qa"  in intents
-    has_recommend = "recommend" in intents
+    has_domain    = "domain_qa"  in intents
+    has_recommend = "recommend"  in intents
+
+    # recommend 의도인데 필수 정보(종류 또는 카테고리)가 없는 경우 재질문
+    if has_recommend:
+        # pet_type이 AI 추출 결과에도 없고, 펫 프로필에도 없는 경우
+        if not filters.get("pet_type") and not pet_profile.get("species"):
+            return "clarify"
+        # 카테고리가 없는 경우 (필터 완화 중이 아닐 때만)
+        if not filters.get("category") and relaxation == 0:
+            return "clarify"
 
     if has_domain and has_recommend:
-        # 병렬 fan-out: Send API
         return [Send("general", state), Send("profile", state)]
     elif has_domain:
         return "general"
@@ -132,13 +141,13 @@ def chat(
     """
     config = {"configurable": {"thread_id": thread_id}}
     init_state = {
-        "user_input":      user_input,
-        "messages":        [],
-        "pet_profile":     pet_profile,
-        "health_concerns": health_concerns or [],
-        "allergies":       allergies       or [],
+        "user_input":       user_input,
+        "messages":         [],
+        "pet_profile":      pet_profile,
+        "health_concerns":  health_concerns or [],
+        "allergies":        allergies       or [],
         "food_preferences": food_preferences or [],
-        "user_id":         user_id,
+        "user_id":          user_id,
         # 초기화 필드
         "search_results":          [],
         "reranked_results":        [],
