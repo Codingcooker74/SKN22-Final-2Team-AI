@@ -25,6 +25,8 @@ class ChatState(TypedDict):
     # recommend 플로우
     search_query:            str | None
     filters:                 dict | None
+    breed_context:           str | None         # 품종별 지식 전체
+    health_traits:           str | None         # 품종별 건강 특징 (추천 이유 생성용)
     search_results:          list[dict]
     reranked_results:        list[dict]
     filter_relaxation_count: int        # RERANK→QUERY 루프 횟수 (최대 1)
