@@ -1,0 +1,178 @@
+name: FastAPI Test EB CI/CD
+
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - develop
+    paths:
+      - ".github/workflows/ci-cd.yml"
+      - "deploy/eb/test-fastapi/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "main.py"
+      - "final_ai/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-eb-deploy-fastapi-develop
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ap-northeast-2
+  FASTAPI_IMAGE_REPO: kimheejoon91/test-tailtalk-fastapi
+  FASTAPI_EB_APP_NAME: test-tailtalk-fastapi
+  FASTAPI_EB_ENV_NAME: test-tailtalk-fastapi-env
+  FASTAPI_HEALTH_PATH: /health
+
+jobs:
+  ci:
+    name: CI - Build Container
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Build FastAPI image
+        run: docker build -t tailtalk-fastapi:ci .
+
+      - name: Compile Python sources
+        run: docker run --rm tailtalk-fastapi:ci python -m compileall main.py final_ai
+
+      - name: Smoke test FastAPI app import
+        run: docker run --rm tailtalk-fastapi:ci python -c "from main import app; print(app.title)"
+
+      - name: Smoke test FastAPI health endpoint
+        run: |
+          docker run --rm tailtalk-fastapi:ci \
+            python -c "from fastapi.testclient import TestClient; import main; client = TestClient(main.app); resp = client.get('/health'); assert resp.status_code == 200, resp.text"
+
+      - name: Validate deploy compose bundle
+        run: |
+          rm -rf .deploy-fastapi
+          mkdir -p .deploy-fastapi
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path("deploy/eb/test-fastapi/docker-compose.yml").read_text()
+          Path(".deploy-fastapi/docker-compose.yml").write_text(
+              src.replace("__FASTAPI_IMAGE__", "tailtalk-fastapi:ci")
+          )
+          PY
+          cat <<'EOF' > .deploy-fastapi/.env
+          POSTGRES_DB=test_db
+          POSTGRES_USER=test_user
+          POSTGRES_PASSWORD=test_password
+          POSTGRES_HOST=test-postgres
+          POSTGRES_PORT=5432
+          OPENAI_API_KEY=test-key
+          EOF
+          docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
+          trap 'docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env down -v --remove-orphans' EXIT
+          docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env up -d
+          sleep 5
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-connrefused http://127.0.0.1/health
+
+  deploy-fastapi:
+    name: CD - FastAPI Test EB
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image tag
+        id: fastapi-meta
+        run: echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & push FastAPI image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.FASTAPI_IMAGE_REPO }}:latest
+            ${{ env.FASTAPI_IMAGE_REPO }}:${{ steps.fastapi-meta.outputs.short_sha }}
+
+      - name: Create FastAPI deployment bundle
+        run: |
+          rm -rf .deploy-fastapi fastapi-deploy.zip
+          mkdir -p .deploy-fastapi
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path("deploy/eb/test-fastapi/docker-compose.yml").read_text()
+          image = "${{ env.FASTAPI_IMAGE_REPO }}:${{ steps.fastapi-meta.outputs.short_sha }}"
+          Path(".deploy-fastapi/docker-compose.yml").write_text(
+              src.replace("__FASTAPI_IMAGE__", image)
+          )
+          PY
+          cat <<'EOF' > .deploy-fastapi/.env
+          POSTGRES_DB=deploy_placeholder
+          POSTGRES_USER=deploy_placeholder
+          POSTGRES_PASSWORD=deploy_placeholder
+          POSTGRES_HOST=deploy-placeholder
+          POSTGRES_PORT=5432
+          OPENAI_API_KEY=deploy-placeholder
+          EOF
+          docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
+          cd .deploy-fastapi
+          zip -r ../fastapi-deploy.zip docker-compose.yml
+
+      - name: Deploy FastAPI to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          region: ${{ env.AWS_REGION }}
+          application_name: ${{ env.FASTAPI_EB_APP_NAME }}
+          environment_name: ${{ env.FASTAPI_EB_ENV_NAME }}
+          version_label: fastapi-${{ steps.fastapi-meta.outputs.short_sha }}
+          deployment_package: fastapi-deploy.zip
+          use_existing_version_if_available: true
+          wait_for_deployment: true
+
+      - name: Configure AWS credentials for verification
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve FastAPI environment URL
+        id: fastapi-env
+        run: |
+          cname="$(aws elasticbeanstalk describe-environments \
+            --application-name "$FASTAPI_EB_APP_NAME" \
+            --environment-names "$FASTAPI_EB_ENV_NAME" \
+            --query 'Environments[0].CNAME' \
+            --output text)"
+          echo "cname=$cname" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test FastAPI health endpoint after deploy
+        run: |
+          curl --fail --silent --show-error \
+            --retry 12 \
+            --retry-delay 10 \
+            --retry-connrefused \
+            "http://${{ steps.fastapi-env.outputs.cname }}${{ env.FASTAPI_HEALTH_PATH }}"
