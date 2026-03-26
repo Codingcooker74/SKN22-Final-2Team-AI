@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from pipeline.chatbot_graph import build_graph
-from schemas.chat import ChatRequest
+from final_ai.pipeline.chatbot_graph import build_graph
+from final_ai.schemas.chat import ChatRequest
 
 router = APIRouter()
 

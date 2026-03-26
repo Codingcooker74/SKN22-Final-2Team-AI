@@ -5,8 +5,8 @@ from dotenv import load_dotenv, find_dotenv
 # .env 파일 로드 (find_dotenv로 상위 디렉토리까지 탐색)
 load_dotenv(find_dotenv())
 
-from pipeline.state import ChatState
 from fastembed import TextEmbedding
+from final_ai.pipeline.state import ChatState
 
 # ── 클라이언트 (lazy init) ──────────────────────────────────────────────────────
 _llm = None

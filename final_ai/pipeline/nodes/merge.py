@@ -1,9 +1,4 @@
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from pipeline.state import ChatState
+from final_ai.pipeline.state import ChatState
 
 
 def merge_node(state: ChatState) -> dict:

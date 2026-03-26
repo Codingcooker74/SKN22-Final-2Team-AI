@@ -2,13 +2,18 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Send
 
-from pipeline.state import ChatState
-from pipeline.nodes.intent   import intent_node
-from pipeline.nodes.clarify  import clarify_node
-from pipeline.nodes.domain_qa import general_node, rag_node
-from pipeline.nodes.recommend import profile_node, query_node, search_node, rerank_node
-from pipeline.nodes.merge    import merge_node
-from pipeline.nodes.respond  import respond_node
+from final_ai.pipeline.nodes.clarify import clarify_node
+from final_ai.pipeline.nodes.domain_qa import general_node, rag_node
+from final_ai.pipeline.nodes.intent import intent_node
+from final_ai.pipeline.nodes.merge import merge_node
+from final_ai.pipeline.nodes.recommend import (
+    profile_node,
+    query_node,
+    rerank_node,
+    search_node,
+)
+from final_ai.pipeline.nodes.respond import respond_node
+from final_ai.pipeline.state import ChatState
 
 
 # ── 라우팅 함수 ────────────────────────────────────────────────────────────────
