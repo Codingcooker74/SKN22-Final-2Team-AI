@@ -148,7 +148,8 @@ def chat(
         "allergies":        allergies       or [],
         "food_preferences": food_preferences or [],
         "user_id":          user_id,
-        # 초기화 필드
+        # 초기화 필드 (매 턴 초기화되지 않도록 필요한 것만 포함)
+        "breed_context":           None,
         "search_results":          [],
         "reranked_results":        [],
         "domain_contexts":         [],
