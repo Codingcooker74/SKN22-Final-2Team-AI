@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import chat, recommend, products
+
+from final_ai.routers import chat, products, recommend
 
 app = FastAPI(title="TailTalk API")
 
@@ -15,6 +16,15 @@ app.add_middleware(
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(recommend.router, prefix="/api/recommend", tags=["recommend"])
 app.include_router(products.router, prefix="/api/products", tags=["products"])
+
+
+@app.get("/")
+def root():
+    return {
+        "service": "TailTalk API",
+        "status": "ok",
+        "health": "/health",
+    }
 
 
 @app.get("/health")

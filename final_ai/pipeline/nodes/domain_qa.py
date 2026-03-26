@@ -1,10 +1,13 @@
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from pipeline.utils import llm, LLM_MODEL, get_db_connection, build_pet_context, DOMAIN_INTENT_TO_CATEGORY
-from pipeline.state import ChatState
+from final_ai.pipeline.state import ChatState
+from final_ai.pipeline.utils import (
+    DOMAIN_INTENT_TO_CATEGORY,
+    LLM_MODEL,
+    build_pet_context,
+    get_db_connection,
+    llm,
+)
 
 
 def _search_domain_pg(query: str, domain_intent: str | None, species: str | None) -> list[str]:

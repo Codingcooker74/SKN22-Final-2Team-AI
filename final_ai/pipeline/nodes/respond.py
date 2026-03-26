@@ -1,11 +1,6 @@
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 from langchain_core.messages import AIMessage
-from pipeline.utils import llm, LLM_MODEL, build_pet_context
-from pipeline.state import ChatState
+from final_ai.pipeline.state import ChatState
+from final_ai.pipeline.utils import LLM_MODEL, build_pet_context, llm
 
 RESPOND_SYSTEM = """\
 당신은 반려동물 쇼핑 서비스의 친절한 AI 어시스턴트입니다.
