@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import (
     DOMAIN_INTENT_TO_CATEGORY,
@@ -10,6 +11,7 @@ from final_ai.pipeline.utils import (
 )
 
 
+@traceable(name="search_domain_context", run_type="retriever")
 def _search_domain_pg(query: str, domain_intent: str | None, species: str | None) -> list[str]:
     """
     데이터 CSV 기반 QA를 PostgreSQL을 통해 검색하거나, 
@@ -61,6 +63,7 @@ def _search_domain_pg(query: str, domain_intent: str | None, species: str | None
     return contexts
 
 
+@traceable(name="general_node", run_type="chain")
 def general_node(state: ChatState) -> dict:
     """쿼리 정제: 모호한 질문을 펫 프로필 기반으로 검색 최적화"""
     pet_ctx = build_pet_context(state)
@@ -78,6 +81,7 @@ def general_node(state: ChatState) -> dict:
     return {"search_query": refined}
 
 
+@traceable(name="rag_node", run_type="chain")
 def rag_node(state: ChatState) -> dict:
     """CSV 기반 domain_qna 검색"""
     query         = state.get("search_query") or state["user_input"]

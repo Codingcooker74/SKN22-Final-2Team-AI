@@ -1,11 +1,13 @@
 import re
 import psycopg2.extras
+from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import LLM_MODEL, build_pet_context, hybrid_search_pg, llm
 
 
 # ── profile_node ──────────────────────────────────────────────────────────────
 
+@traceable(name="profile_node", run_type="chain")
 def profile_node(state: ChatState) -> dict:
     """
     user_id가 있으면 DB에서 pet 정보를 조회하고, 해당 품종의 breed_meta 정보를 결합합니다.
@@ -13,6 +15,7 @@ def profile_node(state: ChatState) -> dict:
     from final_ai.pipeline.utils import get_db_connection
     
     user_id = state.get("user_id")
+    target_pet_id = state.get("target_pet_id")
     pet_profile = dict(state.get("pet_profile") or {})
     health_concerns = list(state.get("health_concerns") or [])
     allergies = list(state.get("allergies") or [])
@@ -35,13 +38,23 @@ def profile_node(state: ChatState) -> dict:
     except: pass
 
     if user_id:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        conn = None
+        cur = None
         try:
-            cur.execute("""
-                SELECT pet_id, name, species, breed, age_years, age_months, weight_kg, gender, budget_range
-                FROM pet WHERE user_id = %s ORDER BY created_at DESC LIMIT 1
-            """, (user_id,))
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            if target_pet_id:
+                cur.execute("""
+                    SELECT pet_id, name, species, breed, age_years, age_months, weight_kg, gender, budget_range
+                    FROM pet
+                    WHERE user_id = %s AND pet_id = %s
+                    LIMIT 1
+                """, (user_id, target_pet_id))
+            else:
+                cur.execute("""
+                    SELECT pet_id, name, species, breed, age_years, age_months, weight_kg, gender, budget_range
+                    FROM pet WHERE user_id = %s ORDER BY created_at DESC LIMIT 1
+                """, (user_id,))
             pet_row = cur.fetchone()
 
             if pet_row:
@@ -69,14 +82,18 @@ def profile_node(state: ChatState) -> dict:
         except Exception as e:
             print(f"[PROFILE] DB 조회 중 오류: {e}")
         finally:
-            cur.close()
-            conn.close()
+            if cur is not None:
+                cur.close()
+            if conn is not None:
+                conn.close()
 
     # 2. 품종 메타 정보 가져오기 (DB에 펫 정보가 없어도 target_breed가 있으면 수행)
     if target_breed:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        conn = None
+        cur = None
         try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
             # 연령대 매칭 로직 (퍼피: 1세 미만, 시니어: 7세 이상, 나머지 어덜트)
             age_group = "어덜트"
             if target_age < 1:  age_group = "퍼피"
@@ -111,8 +128,10 @@ def profile_node(state: ChatState) -> dict:
         except Exception as e:
             print(f"[PROFILE] BreedMeta 조회 중 오류: {e}")
         finally:
-            cur.close()
-            conn.close()
+            if cur is not None:
+                cur.close()
+            if conn is not None:
+                conn.close()
 
     print(f"[PROFILE] user={user_id}, pet={pet_profile.get('name')}, breed={pet_profile.get('breed')}")
     return {
@@ -127,6 +146,7 @@ def profile_node(state: ChatState) -> dict:
 
 # ── query_node ────────────────────────────────────────────────────────────────
 
+@traceable(name="query_node", run_type="chain")
 def query_node(state: ChatState) -> dict:
     """
     LLM을 통해 검색 쿼리를 생성합니다.
@@ -150,11 +170,16 @@ def query_node(state: ChatState) -> dict:
         f"{concern_clause}\n"
         f"원래 질문: {state['user_input']}"
     )
-    search_query = llm.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-    ).choices[0].message.content.strip()
+    try:
+        search_query = llm.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        ).choices[0].message.content.strip()
+    except Exception as e:
+        fallback_parts = [category_hint, subcategory_hint, state["user_input"]]
+        search_query = " ".join(part for part in fallback_parts if part).strip() or state["user_input"]
+        print(f"[QUERY] LLM 실패로 원문 기반 검색어 사용: {e}")
 
     print(f"[QUERY] query={search_query!r}, relaxation={relaxation}")
     return {
@@ -169,6 +194,7 @@ def query_node(state: ChatState) -> dict:
 
 # ── search_node ───────────────────────────────────────────────────────────────
 
+@traceable(name="search_node", run_type="chain")
 def search_node(state: ChatState) -> dict:
     """
     PostgreSQL hybrid_search_pg 실행:
@@ -230,6 +256,7 @@ def _normalize(values: list[float]) -> list[float]:
     return [(v - mn) / (mx - mn) for v in values]
 
 
+@traceable(name="rerank_node", run_type="chain")
 def rerank_node(state: ChatState) -> dict:
     """재랭킹: RRF 점수 + 인기도·감성·재구매율 가중치"""
     candidates      = state.get("search_results") or []
@@ -237,10 +264,13 @@ def rerank_node(state: ChatState) -> dict:
     relaxation      = state.get("filter_relaxation_count", 0)
 
     if not candidates:
-        print("[RERANK] 후보 없음")
+        should_retry = relaxation < 1
+        next_relaxation = relaxation + 1 if should_retry else relaxation
+        print(f"[RERANK] 후보 없음 (relaxation={relaxation}, retry={should_retry})")
         return {
-            "reranked_results":        [],
-            "filter_relaxation_count": relaxation + 1 if relaxation < 1 else relaxation,
+            "reranked_results": [],
+            "filter_relaxation_count": next_relaxation,
+            "recommend_retry_pending": should_retry,
         }
 
     rrf_scores  = [float(c.get("_score", 0.0)) for c in candidates]
@@ -306,14 +336,15 @@ def rerank_node(state: ChatState) -> dict:
     scored.sort(key=lambda x: x[0], reverse=True)
     top = [c for _, c in scored[:_TOP_K]]
 
-    new_relaxation = relaxation
-    if len(top) < 3 and relaxation < 1:
-        new_relaxation = relaxation + 1
+    should_retry = len(top) < 3 and relaxation < 1
+    new_relaxation = relaxation + 1 if should_retry else relaxation
+    if should_retry:
         print(f"[RERANK] 결과 부족 ({len(top)}개) → 필터 완화 예정")
     else:
         print(f"[RERANK] 최종 {len(top)}개")
 
     return {
-        "reranked_results":        top,
+        "reranked_results": top,
         "filter_relaxation_count": new_relaxation,
+        "recommend_retry_pending": should_retry,
     }

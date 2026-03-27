@@ -59,6 +59,14 @@ jobs:
       - name: Smoke test FastAPI app import
         run: docker run --rm tailtalk-fastapi:ci python -c "from main import app; print(app.title)"
 
+      - name: Smoke test prewarmed FastEmbed cache
+        run: |
+          docker run --rm \
+            -e FASTEMBED_LOCAL_FILES_ONLY=true \
+            -e FASTEMBED_AUTO_DISABLE_LOW_MEMORY=false \
+            tailtalk-fastapi:ci \
+            python scripts/prewarm_fastembed.py
+
       - name: Smoke test FastAPI health endpoint
         run: |
           docker run --rm tailtalk-fastapi:ci \
