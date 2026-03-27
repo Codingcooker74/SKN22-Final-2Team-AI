@@ -1,6 +1,8 @@
+from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 
 
+@traceable(name="merge_node", run_type="chain")
 def merge_node(state: ChatState) -> dict:
     """
     domain_qa + recommend 결과 병합.

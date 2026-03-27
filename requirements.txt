@@ -8,6 +8,7 @@ httpx==0.28.1
 langchain==1.2.12
 langgraph==1.1.2
 langchain-openai==1.1.11
+langsmith>=0.4,<1
 pandas==2.2.3
 pyarrow==19.0.1
 fastembed==0.4.1

@@ -10,6 +10,7 @@ class ChatState(TypedDict):
 
     # 사용자 / 펫 (API 요청 페이로드에서 주입, DB 조회 없음)
     user_id:          str | None
+    target_pet_id:    str | None
     pet_profile:      dict | None    # species(dog/cat), breed, age, weight, gender
     health_concerns:  list[str]      # PET_HEALTH_CONCERN
     allergies:        list[str]      # PET_ALLERGY
@@ -27,9 +28,10 @@ class ChatState(TypedDict):
     filters:                 dict | None
     breed_context:           str | None         # 품종별 지식 전체
     health_traits:           str | None         # 품종별 건강 특징 (추천 이유 생성용)
-    search_results:          list[dict]
-    reranked_results:        list[dict]
-    filter_relaxation_count: int        # RERANK→QUERY 루프 횟수 (최대 1)
+    search_results:            list[dict]
+    reranked_results:          list[dict]
+    filter_relaxation_count:   int       # 추천 필터 완화 횟수
+    recommend_retry_pending:   bool      # RERANK 이후 완화 재검색 필요 여부
 
     # domain_qa 플로우
     domain_contexts: list[str]   # RAG 검색 결과

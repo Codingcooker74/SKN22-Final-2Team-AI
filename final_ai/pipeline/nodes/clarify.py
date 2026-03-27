@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from langchain_core.messages import AIMessage
+from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 
 CATEGORY_FILE = Path(__file__).resolve().parents[1] / "data" / "category.json"
@@ -9,6 +10,7 @@ with open(CATEGORY_FILE, encoding="utf-8") as f:
     _categories = json.load(f)
 
 
+@traceable(name="clarify_node", run_type="chain")
 def clarify_node(state: ChatState) -> dict:
     """
     재질문 생성 후 END.

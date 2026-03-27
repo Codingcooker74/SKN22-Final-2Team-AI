@@ -1,4 +1,5 @@
 from langchain_core.messages import AIMessage
+from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import LLM_MODEL, build_pet_context, llm
 
@@ -31,6 +32,7 @@ RESPOND_SYSTEM = """\
 """
 
 
+@traceable(name="respond_node", run_type="chain")
 def respond_node(state: ChatState) -> dict:
     """최종 응답 생성 (LLM)"""
     domain_contexts  = state.get("domain_contexts")  or []
@@ -69,14 +71,23 @@ def respond_node(state: ChatState) -> dict:
         f"참고 데이터:\n{context_block}"
     )
 
-    response = llm.chat.completions.create(
-        model=LLM_MODEL,
-        messages=[
-            {"role": "system", "content": RESPOND_SYSTEM},
-            {"role": "user",   "content": user_msg},
-        ],
-        temperature=0,
-    ).choices[0].message.content.strip()
+    try:
+        response = llm.chat.completions.create(
+            model=LLM_MODEL,
+            messages=[
+                {"role": "system", "content": RESPOND_SYSTEM},
+                {"role": "user",   "content": user_msg},
+            ],
+            temperature=0,
+        ).choices[0].message.content.strip()
+    except Exception as e:
+        if reranked_results:
+            response = f"{pet_name}에 어울리는 {category} 후보를 찾았어요.\n\n추천 상품을 확인해 주세요!"
+        elif domain_contexts:
+            response = "관련 정보를 찾았지만 답변 생성 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
+        else:
+            response = "지금은 추천 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+        print(f"[RESPOND] LLM 실패로 폴백 응답 사용: {e}")
 
     print(f"[RESPOND] {response[:80]}...")
     return {

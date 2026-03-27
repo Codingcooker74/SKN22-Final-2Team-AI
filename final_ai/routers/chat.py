@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+from final_ai.observability import traceable
 from final_ai.pipeline.chatbot_graph import build_graph
 from final_ai.schemas.chat import ChatRequest
 
@@ -21,12 +22,15 @@ def get_graph():
         _graph = build_graph()
     return _graph
 
+
+@traceable(name="tailtalk_fastapi_chat_graph", run_type="chain")
+def _invoke_graph(initial_state: dict, config: dict) -> dict:
+    return get_graph().invoke(initial_state, config=config)
+
 def _sse(event_type: str, data: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False)}\n\n"
 
 async def _stream(req: ChatRequest):
-    graph = get_graph()
-
     initial_state = {
         "user_input": req.message,
         "pet_profile": req.pet_profile,
@@ -34,6 +38,7 @@ async def _stream(req: ChatRequest):
         "allergies": req.allergies,
         "food_preferences": req.food_preferences,
         "user_id": req.user_id,
+        "target_pet_id": req.target_pet_id,
     }
 
     config = {"configurable": {"thread_id": req.thread_id}}
@@ -47,7 +52,16 @@ async def _stream(req: ChatRequest):
             conn = get_db_connection()
             # 펫 테이블에서 user_id에 해당하는 진짜 이름을 가져옵니다.
             with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("SELECT name FROM pet WHERE user_id = %s ORDER BY created_at DESC LIMIT 1", (req.user_id,))
+                if req.target_pet_id:
+                    cur.execute(
+                        "SELECT name FROM pet WHERE user_id = %s AND pet_id = %s LIMIT 1",
+                        (req.user_id, req.target_pet_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT name FROM pet WHERE user_id = %s ORDER BY created_at DESC LIMIT 1",
+                        (req.user_id,),
+                    )
                 row = cur.fetchone()
                 if row and row["name"]:
                     pet_name = row["name"]  # DB에 저장된 실제 이름 (예: 초코)
@@ -70,7 +84,7 @@ async def _stream(req: ChatRequest):
     try:
         final_state = await loop.run_in_executor(
             None,
-            lambda: graph.invoke(initial_state, config=config),
+            lambda: _invoke_graph(initial_state, config),
         )
     except Exception as e:
         yield _sse("error", {"message": str(e)})

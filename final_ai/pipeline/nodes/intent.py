@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import LLM_MODEL, llm
 
@@ -39,6 +40,7 @@ health_disease / care_management / nutrition_diet / behavior_psychology / travel
 """
 
 
+@traceable(name="intent_node", run_type="chain")
 def intent_node(state: ChatState) -> dict:
     user_input = state["user_input"]
     prev_intents = state.get("intents") or []

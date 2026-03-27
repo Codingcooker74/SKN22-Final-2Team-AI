@@ -57,12 +57,13 @@ def route_intent(state: ChatState):
 def route_rerank(state: ChatState) -> str:
     """
     RERANK → QUERY (필터 완화 재검색) or MERGE.
-    결과 < 3개 + 완화 미사용 시 QUERY로 순환.
+    완화 재검색이 필요할 때만 QUERY로 순환한다.
     """
-    results    = state.get("reranked_results") or []
+    results = state.get("reranked_results") or []
     relaxation = state.get("filter_relaxation_count", 0)
+    retry_pending = bool(state.get("recommend_retry_pending"))
 
-    if len(results) < 3 and relaxation < 2:
+    if retry_pending:
         print(f"[ROUTE_RERANK] 결과 {len(results)}개 → QUERY 재시도 (relaxation={relaxation})")
         return "query"
     return "merge"
@@ -139,6 +140,7 @@ def chat(
     allergies: list[str] | None = None,
     food_preferences: list[str] | None = None,
     user_id: str | None = None,
+    target_pet_id: str | None = None,
 ) -> dict:
     """
     단일 턴 실행 헬퍼.
@@ -153,6 +155,7 @@ def chat(
         "allergies":        allergies       or [],
         "food_preferences": food_preferences or [],
         "user_id":          user_id,
+        "target_pet_id":    target_pet_id,
         # 초기화 필드 (매 턴 초기화되지 않도록 필요한 것만 포함)
         "breed_context":           None,
         "search_results":          [],
@@ -160,6 +163,7 @@ def chat(
         "domain_contexts":         [],
         "product_cards":           [],
         "filter_relaxation_count": 0,
+        "recommend_retry_pending": False,
         "clarification_count":     0,
         "intents":                 [],
     }
