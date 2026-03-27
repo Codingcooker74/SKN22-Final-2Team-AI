@@ -42,7 +42,7 @@ async def _stream(req: ChatRequest):
     pet_name = "우리 아이"
     if req.user_id:
         try:
-            from pipeline.utils import get_db_connection
+            from final_ai.pipeline.utils import get_db_connection
             import psycopg2.extras
             conn = get_db_connection()
             # 펫 테이블에서 user_id에 해당하는 진짜 이름을 가져옵니다.
@@ -64,7 +64,7 @@ async def _stream(req: ChatRequest):
         elif "용품" in req.message: category = "용품"
 
     # 제일 먼저 실시간 멘트 전송 (name에 DB의 실제 이름이 들어감)
-    yield _sse("token", {"content": f"{pet_name}에 어울리는 {category}를 찾는 중입니다...\n\n"})
+    yield _sse("info", {"content": f"{pet_name}에 어울리는 {category}를 찾는 중입니다..."})
 
     loop = asyncio.get_event_loop()
     try:
