@@ -17,13 +17,20 @@ INTENT_SYSTEM = f"""
 - unclear   : 잡담·인사·무관·의도불명 (small_talk 없음, 모두 unclear)
 두 의도 동시 감지 시 복수 반환: ["domain_qa", "recommend"]
 
+### 펫 정보 추출 (pet_profile)
+질문에서 다음 정보를 찾아내세요 (JSON의 루트 레벨에 포함):
+- pet_type: 강아지 / 고양이 / null
+- breed: 품종명 (예: 말티즈, 포메라니안, 리트리버 등) / null
+- age: 나이 (예: 7살, 3개월, 시니어 등) / null
+
 ### domain_intent (domain_qa 포함 시)
 health_disease / care_management / nutrition_diet / behavior_psychology / travel
 
 ### Few-shot
-"눈물 자국 심한 포메 사료 추천해줘" → {{"intents":["recommend"],"domain_intent":null,"pet_type":"강아지","category":"사료","subcategory":"눈/눈물","detected_aspect":null,"budget":null}}
-"눈물 자국 왜 생겨? 좋은 사료도 알려줘" → {{"intents":["domain_qa","recommend"],"domain_intent":"health_disease","pet_type":null,"category":"사료","subcategory":null,"detected_aspect":null,"budget":null}}
-"안녕 반가워" → {{"intents":["unclear"],"domain_intent":null,"pet_type":null,"category":null,"subcategory":null,"detected_aspect":null,"budget":null}}
+"눈물 자국 심한 포메 사료 추천해줘" → {{"intents":["recommend"],"domain_intent":null,"pet_type":"강아지","breed":"포메라니안","age":null,"category":"사료","subcategory":"눈/눈물","detected_aspect":null,"budget":null}}
+"눈물 자국 왜 생겨? 좋은 사료도 알려줘" → {{"intents":["domain_qa","recommend"],"domain_intent":"health_disease","pet_type":null,"breed":null,"age":null,"category":"사료","subcategory":null,"detected_aspect":null,"budget":null}}
+"7살 말티즈 관절 영양제" → {{"intents":["recommend"],"domain_intent":null,"pet_type":"강아지","breed":"말티즈","age":"7살","category":"영양제","subcategory":"관절/뼈","detected_aspect":null,"budget":null}}
+"안녕 반가워" → {{"intents":["unclear"],"domain_intent":null,"pet_type":null,"breed":null,"age":null,"category":null,"subcategory":null,"detected_aspect":null,"budget":null}}
 
 ### 카테고리
 {json.dumps(_categories, ensure_ascii=False)}
@@ -75,6 +82,8 @@ def intent_node(state: ChatState) -> dict:
     pet_profile = dict(state.get("pet_profile") or {})
     if new_filters.get("pet_type") and not pet_profile.get("species"):
         pet_profile["species"] = "dog" if new_filters["pet_type"] == "강아지" else "cat"
+    if r.get("breed"): pet_profile["breed"] = r["breed"]
+    if r.get("age"):   pet_profile["age"]   = r["age"]
 
     return {
         "intents":        new_intents or ["unclear"],

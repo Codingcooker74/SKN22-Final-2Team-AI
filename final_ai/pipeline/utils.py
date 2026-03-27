@@ -79,7 +79,7 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         vec_sql = """
             SELECT goods_id, goods_name, pet_type, category, subcategory,
                    price, thumbnail_url, product_url, brand_name, discount_price,
-                   popularity_score, sentiment_avg, repeat_rate
+                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags
             FROM product
             WHERE 1=1 {filters}
             ORDER BY embedding <=> %s::vector
@@ -88,7 +88,7 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         keyword_sql = """
             SELECT goods_id, goods_name, pet_type, category, subcategory,
                    price, thumbnail_url, product_url, brand_name, discount_price,
-                   popularity_score, sentiment_avg, repeat_rate
+                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags
             FROM product
             WHERE search_vector @@ plainto_tsquery('simple', %s) {filters}
             ORDER BY ts_rank(search_vector, plainto_tsquery('simple', %s)) DESC
