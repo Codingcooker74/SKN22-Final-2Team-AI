@@ -236,9 +236,9 @@ def hybrid_search_pg(query: str, top_k: int = 20,
 
         if pet_type:
             filter_parts.append("AND %s = ANY(pet_type)")
-            filter_params_shared.append(pt_kr if 'pt_kr' in locals() else pet_type)
+            filter_params_shared.append(pet_type)
         if category:
-            filter_parts.append("AND (%s = ANY(subcategory) OR goods_name ILIKE %s)")
+            filter_parts.append("AND (%s = ANY(category) OR goods_name ILIKE %s)")
             filter_params_shared.extend([category, f"%{category}%"])
         if subcategory:
             filter_parts.append("AND %s = ANY(subcategory)")
