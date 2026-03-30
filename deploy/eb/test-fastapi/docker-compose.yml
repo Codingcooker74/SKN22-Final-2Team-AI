@@ -20,7 +20,7 @@ services:
       FASTEMBED_LOCAL_FILES_ONLY: "true"
       FASTEMBED_AUTO_DISABLE_LOW_MEMORY: "true"
       FASTAPI_UVICORN_WORKERS: "1"
-    # Docker Hub 인증은 .ebextensions의 docker login으로 처리
+    # Docker Hub 인증은 .platform/hooks/prebuild 의 docker login 으로 처리
     ports:
       - "80:8001"
     restart: unless-stopped
