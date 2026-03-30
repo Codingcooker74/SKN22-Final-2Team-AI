@@ -106,7 +106,19 @@ def build_graph(checkpointer=None):
     g.add_edge("rag",     "merge")
 
     # recommend 서브플로우
-    g.add_edge("profile", "query")
+    def route_profile_node(state: ChatState):
+        if state.get("pet_mismatch"):
+            return "merge"
+        return "query"
+
+    g.add_conditional_edges(
+        "profile",
+        route_profile_node,
+        {
+            "merge": "merge",
+            "query": "query",
+        }
+    )
     g.add_edge("query",   "search")
     g.add_edge("search",  "rerank")
 
@@ -166,6 +178,8 @@ def chat(
         "recommend_retry_pending": False,
         "clarification_count":     0,
         "intents":                 [],
+        "is_pet_override":         False,
+        "pet_mismatch":            False,
     }
     result = graph.invoke(init_state, config=config)
     return {
