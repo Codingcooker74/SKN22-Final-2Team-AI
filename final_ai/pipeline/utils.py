@@ -305,7 +305,7 @@ def hybrid_search_pg(query: str, top_k: int = 20,
             SELECT goods_id, goods_name, pet_type, category, subcategory,
                    price, thumbnail_url, product_url, brand_name, discount_price,
                    popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
-                   rating, review_count
+                   rating, review_count, main_ingredients
             FROM product
             WHERE 1=1 {filters}
             ORDER BY embedding <=> %s::vector
@@ -315,23 +315,37 @@ def hybrid_search_pg(query: str, top_k: int = 20,
             SELECT goods_id, goods_name, pet_type, category, subcategory,
                    price, thumbnail_url, product_url, brand_name, discount_price,
                    popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
-                   rating, review_count
+                   rating, review_count, main_ingredients
             FROM product
             WHERE search_vector @@ plainto_tsquery('simple', %s) {filters}
             ORDER BY ts_rank(search_vector, plainto_tsquery('simple', %s)) DESC
             LIMIT 100
         """
+        # [C] 인기도 기반 검색 (상위 100개) - 초기 후보군에 인기 상품 강제 포함용
+        pop_sql = """
+            SELECT goods_id, goods_name, pet_type, category, subcategory,
+                   price, thumbnail_url, product_url, brand_name, discount_price,
+                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
+                   rating, review_count, main_ingredients
+            FROM product
+            WHERE 1=1 {filters}
+            ORDER BY popularity_score DESC NULLS LAST, review_count DESC NULLS LAST
+            LIMIT 100
+        """
 
         # 공통 필터 조건 구성
-        filter_parts = []
+        filter_parts = [
+            "AND goods_name NOT ILIKE '%%샘플%%'",
+            "AND goods_id NOT LIKE 'GP%%'"
+        ]
         filter_params_shared = []
 
         if pet_type_kr:
             filter_parts.append("AND %s = ANY(pet_type)")
             filter_params_shared.append(pet_type_kr)
         if category:
-            filter_parts.append("AND (%s = ANY(category) OR %s = ANY(subcategory) OR goods_name ILIKE %s)")
-            filter_params_shared.extend([category, category, f"%{category}%"])
+            filter_parts.append("AND (%s = ANY(category) OR %s = ANY(subcategory))")
+            filter_params_shared.extend([category, category])
         if subcategory:
             filter_parts.append("AND %s = ANY(subcategory)")
             filter_params_shared.append(subcategory)
@@ -344,20 +358,21 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         cols = []
         vec_rows = []
         if query_vec is not None:
-            # [A] 벡터 검색 파라미터: 필터들... 그 다음 벡터
+            # [A] 벡터 검색 파라미터
             cur.execute(vec_sql.format(filters=filter_str), filter_params_shared + [query_vec])
             cols = [d[0] for d in cur.description]
             vec_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
-        else:
-            print("[hybrid_search_pg] dense search skipped; falling back to keyword-only search")
-
-        # [B] 키워드 검색 파라미터: 검색어들... 그 다음 필터들
-        # keyword_sql은 %s가 검색어용으로 앞단에 2개 있음
-        cur.execute(keyword_sql.format(filters=filter_str), [query, query] + filter_params_shared)
+        
+        # [B] 키워드 검색
+        cur.execute(keyword_sql.format(filters=filter_str), [query] + filter_params_shared + [query])
         kw_cols = [d[0] for d in cur.description]
-        if not cols:
-            cols = kw_cols
+        if not cols: cols = kw_cols
         kw_rows = [dict(zip(kw_cols, row)) for row in cur.fetchall()]
+
+        # [C] 인기도 검색 (추가)
+        cur.execute(pop_sql.format(filters=filter_str), filter_params_shared)
+        pop_cols = [d[0] for d in cur.description]
+        pop_rows = [dict(zip(pop_cols, row)) for row in cur.fetchall()]
 
         # 자연어 질문이 search_vector와 정확히 맞지 않는 경우를 위한 느슨한 폴백 검색.
         if not vec_rows and not kw_rows:
@@ -395,7 +410,7 @@ def hybrid_search_pg(query: str, top_k: int = 20,
                     SELECT goods_id, goods_name, pet_type, category, subcategory,
                            price, thumbnail_url, product_url, brand_name, discount_price,
                            popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
-                           rating, review_count,
+                           rating, review_count, main_ingredients,
                            ({' + '.join(score_parts)}) AS loose_score
                     FROM product
                     WHERE 1=1 {filter_str}
@@ -411,11 +426,11 @@ def hybrid_search_pg(query: str, top_k: int = 20,
                 kw_rows = [dict(zip(loose_cols, row)) for row in cur.fetchall()]
                 if kw_rows:
                     print(
-                        "[hybrid_search_pg] loose fallback search matched "
+                        f"[hybrid_search_pg] loose fallback search matched "
                         f"{len(kw_rows)} rows for query={query!r}, terms={loose_terms}"
                     )
 
-        # [B] RRF 점수 계산
+        # [D] RRF 점수 계산 (벡터 + 키워드 + 인기도 통합)
         scores: dict[str, float] = {}
         rows_by_id: dict[str, dict] = {}
 
@@ -426,6 +441,12 @@ def hybrid_search_pg(query: str, top_k: int = 20,
 
         for rank, row in enumerate(kw_rows):
             gid = row["goods_id"]
+            scores[gid] = scores.get(gid, 0) + 1 / (k + rank + 1)
+            rows_by_id[gid] = row
+            
+        for rank, row in enumerate(pop_rows):
+            gid = row["goods_id"]
+            # 인기도 기반 순위도 RRF에 합산하여 후보군 진입 장벽 낮춤
             scores[gid] = scores.get(gid, 0) + 1 / (k + rank + 1)
             rows_by_id[gid] = row
 
@@ -460,6 +481,25 @@ DOMAIN_INTENT_TO_CATEGORY = {
 }
 
 
+HEALTH_CONCERN_MAP = {
+    "skin": "피부",
+    "joint": "관절",
+    "digestion": "소화",
+    "weight": "체중",
+    "urinary": "요로",
+    "eye": "눈물",
+    "hairball": "헤어볼",
+    "dental": "치아",
+    "immunity": "면역",
+}
+
+
+def translate_health_concerns(concerns: list[str] | None) -> list[str]:
+    if not concerns:
+        return []
+    return [HEALTH_CONCERN_MAP.get(c, c) for c in concerns]
+
+
 def build_pet_context(state: ChatState) -> str:
     p = state.get("pet_profile") or {}
     parts = []
@@ -467,8 +507,11 @@ def build_pet_context(state: ChatState) -> str:
         parts.append(f"종: {normalize_pet_species(p['species']) or p['species']}")
     if p.get("breed"):   parts.append(f"품종: {p['breed']}")
     if p.get("age"):     parts.append(f"나이: {p['age']}")
-    if state.get("health_concerns"):
-        parts.append(f"건강관심사: {', '.join(state['health_concerns'])}")
+    
+    concerns = translate_health_concerns(state.get("health_concerns"))
+    if concerns:
+        parts.append(f"건강관심사: {', '.join(concerns)}")
+
     if state.get("allergies"):
         parts.append(f"알레르기: {', '.join(state['allergies'])}")
     if state.get("food_preferences"):

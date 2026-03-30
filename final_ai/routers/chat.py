@@ -109,8 +109,8 @@ async def _stream(req: ChatRequest):
         yield _sse("token", {"content": chunk})
         await asyncio.sleep(0.01)
 
-    if product_cards:
-        yield _sse("products", {"cards": product_cards})
+    # 상품 카드 전송 (결과가 없더라도 빈 배열을 보내어 프론트엔드 UI 갱신 유도)
+    yield _sse("products", {"cards": product_cards})
 
     yield _sse("done", {})
 

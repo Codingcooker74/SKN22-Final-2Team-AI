@@ -1,7 +1,12 @@
 from langchain_core.messages import AIMessage
 from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
-from final_ai.pipeline.utils import LLM_MODEL, build_pet_context, llm
+from final_ai.pipeline.utils import (
+    LLM_MODEL,
+    build_pet_context,
+    llm,
+    translate_health_concerns,
+)
 
 RESPOND_SYSTEM = """\
 당신은 반려동물 쇼핑 서비스의 친절한 AI 어시스턴트입니다.
@@ -35,6 +40,11 @@ RESPOND_SYSTEM = """\
 @traceable(name="respond_node", run_type="chain")
 def respond_node(state: ChatState) -> dict:
     """최종 응답 생성 (LLM)"""
+    if state.get("pet_mismatch"):
+        return {
+            "response": "펫 프로필과 다른 반려동물입니다. 펫 프로필 등록 먼저 해주세요.",
+            "product_cards": []
+        }
     domain_contexts  = state.get("domain_contexts")  or []
     reranked_results = state.get("reranked_results") or []
     pet_ctx          = build_pet_context(state)
@@ -42,7 +52,12 @@ def respond_node(state: ChatState) -> dict:
     health_concerns  = state.get("health_concerns") or []
     
     # 펫 이름 및 카테고리 추출
-    pet_name = (state.get("pet_profile") or {}).get("name") or "우리 아이"
+    pet_profile = state.get("pet_profile") or {}
+    pet_name = pet_profile.get("name")
+    if not pet_name:
+        breed = pet_profile.get("breed")
+        pet_name = f"{breed} 아이" if breed else "우리 아이"
+        
     category = (state.get("filters") or {}).get("category") or "상품"
     health_traits = state.get("health_traits") or "특별한 데이터가 없습니다."
     
@@ -60,11 +75,13 @@ def respond_node(state: ChatState) -> dict:
 
     context_block = "\n\n".join(context_parts) if context_parts else "검색된 정보가 없습니다."
 
+    translated_concerns = translate_health_concerns(health_concerns)
+    
     user_msg = (
         f"현재 상황 정보:\n"
         f"- 펫 이름: {pet_name}\n"
         f"- 카테고리: {category}\n"
-        f"- 등록된 건강 관심사: {', '.join(health_concerns) if health_concerns else '없음'}\n"
+        f"- 등록된 건강 관심사: {', '.join(translated_concerns) if translated_concerns else '없음'}\n"
         f"- 건강 특징: {health_traits}\n"
         f"- 전체 펫 정보: {pet_ctx}\n\n"
         f"사용자 질문: {user_input}\n\n"
