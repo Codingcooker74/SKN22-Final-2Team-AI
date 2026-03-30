@@ -20,3 +20,5 @@ ARG PREWARM_FASTEMBED=1
 RUN if [ "$PREWARM_FASTEMBED" = "1" ]; then python scripts/prewarm_fastembed.py; fi
 
 COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
