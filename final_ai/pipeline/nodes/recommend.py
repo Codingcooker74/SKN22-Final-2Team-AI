@@ -257,6 +257,12 @@ def search_node(state: ChatState) -> dict:
         subcategory=subcategory,
         budget=budget,
     )
+    # [추가] 샘플/체험팩 상품 강제 제외 (SQL 필터 우회 대비 2차 방어)
+    blacklist_words = ["샘플", "맛보기", "체험팩"]
+    candidates = [
+        c for c in candidates 
+        if not any(bw in c.get("goods_name", "") for bw in blacklist_words)
+    ]
 
     # 알레르기 post-filter
     allergies = state.get("allergies") or []
