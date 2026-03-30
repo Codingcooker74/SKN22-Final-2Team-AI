@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   fastapi:
     image: __FASTAPI_IMAGE__
@@ -22,11 +20,7 @@ services:
       FASTEMBED_LOCAL_FILES_ONLY: "true"
       FASTEMBED_AUTO_DISABLE_LOW_MEMORY: "true"
       FASTAPI_UVICORN_WORKERS: "1"
-    # EB에서 docker login을 통해 인증 처리 (auth 대신 사용)
-    # docker-compose v3.8에서 지원하는 auth 속성
-    auth:
-      username: ${DOCKER_USERNAME:-}
-      password: ${DOCKER_PASSWORD:-}
+    # Docker Hub 인증은 .ebextensions의 docker login으로 처리
     ports:
       - "80:8001"
     restart: unless-stopped
