@@ -2,7 +2,13 @@ import re
 import psycopg2.extras
 from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
-from final_ai.pipeline.utils import LLM_MODEL, build_pet_context, hybrid_search_pg, llm
+from final_ai.pipeline.utils import (
+    LLM_MODEL,
+    build_pet_context,
+    hybrid_search_pg,
+    llm,
+    normalize_pet_species,
+)
 
 
 # ── profile_node ──────────────────────────────────────────────────────────────
@@ -209,14 +215,9 @@ def search_node(state: ChatState) -> dict:
     subcategory = filters.get("subcategory") if relaxation == 0 else None
     budget      = state.get("budget")
 
-    # pet_type 변환 (dog/cat → 강아지/고양이)
-    pt_kr = None
-    if pet_type == "dog":
-        pt_kr = "강아지"
-    elif pet_type == "cat":
-        pt_kr = "고양이"
-    elif pet_type:  # 이미 한글인 경우
-        pt_kr = pet_type
+    pt_kr = normalize_pet_species(pet_type)
+    if not pt_kr:
+        pt_kr = normalize_pet_species((state.get("pet_profile") or {}).get("species"))
 
     candidates = hybrid_search_pg(
         query=query,
