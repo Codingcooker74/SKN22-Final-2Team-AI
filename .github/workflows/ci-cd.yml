@@ -158,6 +158,10 @@ jobs:
           LANGSMITH_PROJECT=${{ secrets.LANGSMITH_PROJECT }}
           LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}
           LANGSMITH_WORKSPACE_ID=${{ secrets.LANGSMITH_WORKSPACE_ID }}
+
+          # Docker Hub credentials for private image pull
+          DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_PASSWORD=${{ secrets.DOCKERHUB_TOKEN }}
           EOF
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
           cd .deploy-fastapi

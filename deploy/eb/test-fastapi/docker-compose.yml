@@ -20,6 +20,10 @@ services:
       FASTEMBED_LOCAL_FILES_ONLY: "true"
       FASTEMBED_AUTO_DISABLE_LOW_MEMORY: "true"
       FASTAPI_UVICORN_WORKERS: "1"
+    # Docker Hub registry authentication for private image pull
+    auth:
+      username: ${DOCKER_USERNAME}
+      password: ${DOCKER_PASSWORD}
     ports:
       - "80:8001"
     restart: unless-stopped
