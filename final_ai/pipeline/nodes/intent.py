@@ -27,11 +27,15 @@ INTENT_SYSTEM = f"""
 ### domain_intent (domain_qa 포함 시)
 health_disease / care_management / nutrition_diet / behavior_psychology / travel
 
-### Few-shot
-"눈물 자국 심한 포메 사료 추천해줘" → {{"intents":["recommend"],"domain_intent":null,"pet_type":"강아지","breed":"포메라니안","age":null,"category":"사료","subcategory":"눈/눈물","detected_aspect":null,"budget":null}}
-"눈물 자국 왜 생겨? 좋은 사료도 알려줘" → {{"intents":["domain_qa","recommend"],"domain_intent":"health_disease","pet_type":null,"breed":null,"age":null,"category":"사료","subcategory":null,"detected_aspect":null,"budget":null}}
-"7살 말티즈 관절 영양제" → {{"intents":["recommend"],"domain_intent":null,"pet_type":"강아지","breed":"말티즈","age":"7살","category":"영양제","subcategory":"관절/뼈","detected_aspect":null,"budget":null}}
-"안녕 반가워" → {{"intents":["unclear"],"domain_intent":null,"pet_type":null,"breed":null,"age":null,"category":null,"subcategory":null,"detected_aspect":null,"budget":null}}
+### Few-shot (문맥 활용 예시)
+1. 신규: "7살 말티즈 사료 추천해줘"
+   -> {{"intents":["recommend"],"pet_type":"강아지","breed":"말티즈","age":"7살","category":"사료"}}
+2. 후속(카테고리 변경): "간식은?" (이전: 7살 말티즈 사료)
+   -> {{"intents":["recommend"],"pet_type":null,"breed":null,"age":null,"category":"간식"}}
+3. 오버라이드(펫 변경): "4살 페르시안 고양이 장난감은?"
+   -> {{"intents":["recommend"],"pet_type":"고양이","breed":"페르시안","age":"4살","category":"장난감"}}
+4. 복합 질문: "눈물 왜 생겨? 좋은 사료도 알려줘"
+   -> {{"intents":["domain_qa","recommend"],"domain_intent":"health_disease","category":"사료"}}
 
 ### 카테고리
 {json.dumps(_categories, ensure_ascii=False)}
@@ -45,11 +49,16 @@ def intent_node(state: ChatState) -> dict:
     user_input = state["user_input"]
     prev_intents = state.get("intents") or []
     prev_filters = state.get("filters") or {}
+    prev_pet = state.get("pet_profile") or {}
 
     context = ""
-    # 재질문 중이거나 이전 의도가 있는 경우 컨텍스트 제공
+    # 재질문 중이거나 이전 정보가 있는 경우 컨텍스트 제공
     if (state.get("clarification_count", 0) > 0 or prev_intents) and user_input:
-        prev_data = {"intents": prev_intents, "filters": prev_filters}
+        prev_data = {
+            "intents": prev_intents,
+            "filters": prev_filters,
+            "pet_profile": prev_pet
+        }
         context = f"\n이전 추출 정보: {json.dumps(prev_data, ensure_ascii=False)}"
 
     res = llm.chat.completions.create(
@@ -63,29 +72,49 @@ def intent_node(state: ChatState) -> dict:
     )
     r = json.loads(res.choices[0].message.content)
     
-    # [Merge Logic] 기존 정보와 새 추출 정보 병합
+    # [Merge & Override Logic]
     new_intents = r.get("intents") or []
     
-    # 만약 현재 답변이 "강아지", "사료" 같이 짧은 슬롯 채우기성 답변이라면 
-    # 이전 의도(recommend/domain_qa)를 유지할 확률이 높음
+    # 1. 의도 유지 (슬롯 채우기성 일 때)
     if not any(i in ["recommend", "domain_qa"] for i in new_intents):
         if "recommend" in prev_intents:
             new_intents = ["recommend"]
         elif "domain_qa" in prev_intents:
             new_intents = ["domain_qa"]
 
+    # 2. 펫 프로필 병합/오버라이드 판단
+    new_pet = dict(prev_pet)
+    
+    # 펫 핵심 정보(종, 품종)가 새롭게 감지되면 기존 정보를 '오버라이드' 한다고 간주
+    is_new_pet = bool(r.get("pet_type") or r.get("breed"))
+    
+    if is_new_pet:
+        # 완전히 새로운 펫 정보로 교체
+        new_pet = {}
+        if r.get("pet_type"):
+            new_pet["species"] = "dog" if r["pet_type"] == "강아지" else "cat"
+        if r.get("breed"):
+            new_pet["breed"] = r["breed"]
+        if r.get("age"):
+            new_pet["age"] = r["age"]
+    else:
+        # 펫 정보는 유지하고 개별 필드만 업데이트 (예: 나이만 추가되는 경우 등)
+        if r.get("age"):
+            new_pet["age"] = r["age"]
+
+    # 3. 검색 필터 병합
     new_filters = prev_filters.copy()
-    for k in ["pet_type", "category", "subcategory"]:
+    
+    # 펫 정보가 바뀌었다면 필터 상의 pet_type도 강제 업데이트
+    if is_new_pet:
+        new_filters["pet_type"] = r.get("pet_type")
+    
+    # 카테고리 및 기타 필드 업데이트
+    for k in ["category", "subcategory"]:
         if r.get(k):
             new_filters[k] = r[k]
 
-    print(f"[INTENT] original={r}, merged_intents={new_intents}, merged_filters={new_filters}")
-
-    pet_profile = dict(state.get("pet_profile") or {})
-    if new_filters.get("pet_type") and not pet_profile.get("species"):
-        pet_profile["species"] = "dog" if new_filters["pet_type"] == "강아지" else "cat"
-    if r.get("breed"): pet_profile["breed"] = r["breed"]
-    if r.get("age"):   pet_profile["age"]   = r["age"]
+    print(f"[INTENT] input='{user_input}' -> merged_intents={new_intents}, merged_filters={new_filters}, pet={new_pet}")
 
     return {
         "intents":        new_intents or ["unclear"],
@@ -93,6 +122,6 @@ def intent_node(state: ChatState) -> dict:
         "detected_aspect": r.get("detected_aspect") or state.get("detected_aspect"),
         "budget":         int(r["budget"]) if r.get("budget") else state.get("budget"),
         "filters":        new_filters,
-        "pet_profile":             pet_profile,
-        "filter_relaxation_count": state.get("filter_relaxation_count", 0),
+        "pet_profile":    new_pet,
+        "filter_relaxation_count": state.get("filter_relaxation_count", 0) if not r.get("category") else 0,
     }
