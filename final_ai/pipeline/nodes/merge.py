@@ -1,5 +1,17 @@
+from decimal import Decimal
+
 from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
+
+
+def _serialize_number(value):
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    return value
 
 
 @traceable(name="merge_node", run_type="chain")
@@ -29,8 +41,10 @@ def merge_node(state: ChatState) -> dict:
             "goods_id":      p.get("goods_id"),
             "product_name":  p.get("goods_name"),     # product 테이블 컬럼: goods_name
             "brand_name":    p.get("brand_name"),
-            "price":         p.get("price"),
-            "discount_price":p.get("discount_price"),
+            "price":         _serialize_number(p.get("price")),
+            "discount_price":_serialize_number(p.get("discount_price")),
+            "rating":        _serialize_number(p.get("rating")),
+            "reviews":       _serialize_number(p.get("review_count")),
             "thumbnail_url": p.get("thumbnail_url"),
             "product_url":   p.get("product_url"),
         }

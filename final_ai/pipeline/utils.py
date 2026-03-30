@@ -1,4 +1,5 @@
 import os
+import re
 import psycopg2
 from dotenv import load_dotenv, find_dotenv
 
@@ -116,6 +117,94 @@ class _LazyLLM:
 llm = _LazyLLM()
 
 # ── DB 연결 설정 ────────────────────────────────────────────────────────────────
+_PET_SPECIES_KR = {
+    "dog": "강아지",
+    "cat": "고양이",
+    "강아지": "강아지",
+    "고양이": "고양이",
+}
+
+_SEARCH_STOPWORDS = {
+    "추천",
+    "추천해줘",
+    "추천해주세요",
+    "추천해",
+    "알려줘",
+    "알려주세요",
+    "좋은",
+    "좋아요",
+    "우리",
+    "아이",
+    "반려동물",
+    "반려견",
+    "반려묘",
+}
+
+_TOKEN_SUFFIXES = (
+    "추천해주세요",
+    "추천해줘",
+    "알려주세요",
+    "알려줘",
+    "입니다",
+    "이에요",
+    "예요",
+    "에요",
+    "으로",
+    "에서",
+    "한테",
+    "용",
+    "에",
+    "의",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "과",
+    "와",
+    "도",
+    "로",
+)
+
+
+def normalize_pet_species(species: str | None) -> str | None:
+    if not species:
+        return None
+    return _PET_SPECIES_KR.get(str(species).strip())
+
+
+def _extract_search_terms(query: str, *extra_terms: str | None) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add_token(raw: str):
+        token = raw.strip()
+        if not token:
+            return
+        if token in _SEARCH_STOPWORDS:
+            return
+        if token not in seen:
+            seen.add(token)
+            terms.append(token)
+
+    for source in (query, *extra_terms):
+        if not source:
+            continue
+        for raw in re.findall(r"[0-9A-Za-z가-힣/]+", str(source)):
+            pieces = [piece for piece in raw.split("/") if piece]
+            for piece in pieces:
+                add_token(piece)
+                for suffix in _TOKEN_SUFFIXES:
+                    if len(piece) <= len(suffix) + 1:
+                        continue
+                    if piece.endswith(suffix):
+                        trimmed = piece[: -len(suffix)].strip()
+                        if len(trimmed) >= 2:
+                            add_token(trimmed)
+    return terms
+
+
 def get_db_connection():
     """PostgreSQL 연결 반환.
 
@@ -202,6 +291,7 @@ def hybrid_search_pg(query: str, top_k: int = 20,
     이용한 Hybrid Search 후 RRF(Reciprocal Rank Fusion)로 상위 결과 반환.
     """
     query_vec = embed_query(query)
+    pet_type_kr = normalize_pet_species(pet_type) or pet_type
     k = 60  # RRF 상수
 
     conn = None
@@ -214,7 +304,8 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         vec_sql = """
             SELECT goods_id, goods_name, pet_type, category, subcategory,
                    price, thumbnail_url, product_url, brand_name, discount_price,
-                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags
+                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
+                   rating, review_count
             FROM product
             WHERE 1=1 {filters}
             ORDER BY embedding <=> %s::vector
@@ -223,7 +314,8 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         keyword_sql = """
             SELECT goods_id, goods_name, pet_type, category, subcategory,
                    price, thumbnail_url, product_url, brand_name, discount_price,
-                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags
+                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
+                   rating, review_count
             FROM product
             WHERE search_vector @@ plainto_tsquery('simple', %s) {filters}
             ORDER BY ts_rank(search_vector, plainto_tsquery('simple', %s)) DESC
@@ -234,12 +326,12 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         filter_parts = []
         filter_params_shared = []
 
-        if pet_type:
+        if pet_type_kr:
             filter_parts.append("AND %s = ANY(pet_type)")
-            filter_params_shared.append(pet_type)
+            filter_params_shared.append(pet_type_kr)
         if category:
-            filter_parts.append("AND (%s = ANY(category) OR goods_name ILIKE %s)")
-            filter_params_shared.extend([category, f"%{category}%"])
+            filter_parts.append("AND (%s = ANY(category) OR %s = ANY(subcategory) OR goods_name ILIKE %s)")
+            filter_params_shared.extend([category, category, f"%{category}%"])
         if subcategory:
             filter_parts.append("AND %s = ANY(subcategory)")
             filter_params_shared.append(subcategory)
@@ -266,6 +358,62 @@ def hybrid_search_pg(query: str, top_k: int = 20,
         if not cols:
             cols = kw_cols
         kw_rows = [dict(zip(kw_cols, row)) for row in cur.fetchall()]
+
+        # 자연어 질문이 search_vector와 정확히 맞지 않는 경우를 위한 느슨한 폴백 검색.
+        if not vec_rows and not kw_rows:
+            loose_terms = _extract_search_terms(query, category, subcategory)
+            if loose_terms:
+                score_parts = []
+                score_params = []
+                where_parts = []
+                where_params = []
+
+                for term in loose_terms:
+                    like = f"%{term}%"
+                    score_parts.append(
+                        "("
+                        "CASE WHEN goods_name ILIKE %s THEN 5 ELSE 0 END + "
+                        "CASE WHEN brand_name ILIKE %s THEN 2 ELSE 0 END + "
+                        "CASE WHEN COALESCE(array_to_string(category, ' '), '') ILIKE %s THEN 3 ELSE 0 END + "
+                        "CASE WHEN COALESCE(array_to_string(subcategory, ' '), '') ILIKE %s THEN 4 ELSE 0 END + "
+                        "CASE WHEN COALESCE(array_to_string(health_concern_tags, ' '), '') ILIKE %s THEN 4 ELSE 0 END"
+                        ")"
+                    )
+                    score_params.extend([like, like, like, like, like])
+                    where_parts.append(
+                        "("
+                        "goods_name ILIKE %s OR "
+                        "brand_name ILIKE %s OR "
+                        "COALESCE(array_to_string(category, ' '), '') ILIKE %s OR "
+                        "COALESCE(array_to_string(subcategory, ' '), '') ILIKE %s OR "
+                        "COALESCE(array_to_string(health_concern_tags, ' '), '') ILIKE %s"
+                        ")"
+                    )
+                    where_params.extend([like, like, like, like, like])
+
+                loose_sql = f"""
+                    SELECT goods_id, goods_name, pet_type, category, subcategory,
+                           price, thumbnail_url, product_url, brand_name, discount_price,
+                           popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
+                           rating, review_count,
+                           ({' + '.join(score_parts)}) AS loose_score
+                    FROM product
+                    WHERE 1=1 {filter_str}
+                      AND ({' OR '.join(where_parts)})
+                    ORDER BY loose_score DESC,
+                             popularity_score DESC NULLS LAST,
+                             review_count DESC NULLS LAST,
+                             price ASC
+                    LIMIT 100
+                """
+                cur.execute(loose_sql, score_params + filter_params_shared + where_params)
+                loose_cols = [d[0] for d in cur.description]
+                kw_rows = [dict(zip(loose_cols, row)) for row in cur.fetchall()]
+                if kw_rows:
+                    print(
+                        "[hybrid_search_pg] loose fallback search matched "
+                        f"{len(kw_rows)} rows for query={query!r}, terms={loose_terms}"
+                    )
 
         # [B] RRF 점수 계산
         scores: dict[str, float] = {}
@@ -316,7 +464,7 @@ def build_pet_context(state: ChatState) -> str:
     p = state.get("pet_profile") or {}
     parts = []
     if p.get("species"):
-        parts.append(f"종: {'강아지' if p['species'] == 'dog' else '고양이'}")
+        parts.append(f"종: {normalize_pet_species(p['species']) or p['species']}")
     if p.get("breed"):   parts.append(f"품종: {p['breed']}")
     if p.get("age"):     parts.append(f"나이: {p['age']}")
     if state.get("health_concerns"):

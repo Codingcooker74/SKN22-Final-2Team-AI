@@ -1,6 +1,7 @@
 import json
 import asyncio
 import uuid
+from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
@@ -27,8 +28,16 @@ def get_graph():
 def _invoke_graph(initial_state: dict, config: dict) -> dict:
     return get_graph().invoke(initial_state, config=config)
 
+def _json_default(value):
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    return str(value)
+
+
 def _sse(event_type: str, data: dict) -> str:
-    return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, default=_json_default)}\n\n"
 
 async def _stream(req: ChatRequest):
     initial_state = {
