@@ -22,6 +22,8 @@ class ChatState(TypedDict):
     clarification_count: int
     detected_aspect:     str | None  # ABSA 속성
     budget:              int | None
+    is_pet_override:     bool        # 채팅 기반 펫 정보 우선 반영 여부
+    pet_mismatch:        bool        # 등록된 펫 정보와 채팅 정보 불일치 여부
 
     # recommend 플로우
     search_query:            str | None

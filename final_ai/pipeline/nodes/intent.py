@@ -27,13 +27,18 @@ INTENT_SYSTEM = f"""
 ### domain_intent (domain_qa 포함 시)
 health_disease / care_management / nutrition_diet / behavior_psychology / travel
 
+### 카테고리 추출 규칙
+- 제공된 카테고리 목록에서 가장 적합한 것을 선택하세요.
+- **소분류(subcategory)를 추출할 때는 반드시 그에 부합하는 대분류(category)도 함께 응답하세요.**
+- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**
+
 ### Few-shot (문맥 활용 예시)
 1. 신규: "7살 말티즈 사료 추천해줘"
    -> {{"intents":["recommend"],"pet_type":"강아지","breed":"말티즈","age":"7살","category":"사료"}}
-2. 후속(카테고리 변경): "간식은?" (이전: 7살 말티즈 사료)
-   -> {{"intents":["recommend"],"pet_type":null,"breed":null,"age":null,"category":"간식"}}
-3. 오버라이드(펫 변경): "4살 페르시안 고양이 장난감은?"
-   -> {{"intents":["recommend"],"pet_type":"고양이","breed":"페르시안","age":"4살","category":"장난감"}}
+2. 후속(카테고리 변경): "간식은?" (이전: 사료)
+   -> {{"intents":["recommend"],"category":"간식"}}
+3. 후속(용품 변경): "급수기 추천해줘" (이전: 간식)
+   -> {{"intents":["recommend"],"category":"용품","subcategory":"급식/급수기"}}
 4. 복합 질문: "눈물 왜 생겨? 좋은 사료도 알려줘"
    -> {{"intents":["domain_qa","recommend"],"domain_intent":"health_disease","category":"사료"}}
 
@@ -110,11 +115,45 @@ def intent_node(state: ChatState) -> dict:
         new_filters["pet_type"] = r.get("pet_type")
     
     # 카테고리 및 기타 필드 업데이트
-    for k in ["category", "subcategory"]:
-        if r.get(k):
-            new_filters[k] = r[k]
+    # [정합성 보정] subcategory는 있는데 category가 없거나 불일치할 경우 보정
+    detected_cat = r.get("category")
+    detected_sub = r.get("subcategory")
+    
+    if detected_sub and not detected_cat:
+        # subcategory가 속한 category를 _categories에서 찾기
+        current_pet_type = r.get("pet_type") or prev_filters.get("pet_type") or "강아지"
+        pet_cat_map = _categories.get(current_pet_type, {})
+        for cat_name, info in pet_cat_map.items():
+            if detected_sub in info.get("subcategories", []):
+                detected_cat = cat_name
+                break
+    
+    if detected_cat:
+        new_filters["category"] = detected_cat
+    if detected_sub:
+        new_filters["subcategory"] = detected_sub
+    
+    # 만약 새로운 카테고리가 들어왔는데 기존 소분류가 남아있다면 초기화 (정합성)
+    if detected_cat and not detected_sub and "subcategory" in new_filters:
+        # 기존 소분류가 새 카테고리에 속하지 않으면 삭제
+        current_pet_type = r.get("pet_type") or prev_filters.get("pet_type") or "강아지"
+        safe_subs = _categories.get(current_pet_type, {}).get(detected_cat, {}).get("subcategories", [])
+        if new_filters["subcategory"] not in safe_subs:
+            del new_filters["subcategory"]
 
     print(f"[INTENT] input='{user_input}' -> merged_intents={new_intents}, merged_filters={new_filters}, pet={new_pet}")
+
+    # 4. 펫 정보가 바뀌었다면 기존의 특정 펫 기반 메타데이터(관심사, 알러지 등)는 초기화
+    # (새로운 펫에게 이전 펫의 건강 고민이나 알러지가 적용되는 것을 방지)
+    overridden_metadata = {}
+    if is_new_pet:
+        overridden_metadata = {
+            "health_concerns": [],
+            "allergies": [],
+            "food_preferences": [],
+            "health_traits": "",
+            "breed_context": ""
+        }
 
     return {
         "intents":        new_intents or ["unclear"],
@@ -123,5 +162,7 @@ def intent_node(state: ChatState) -> dict:
         "budget":         int(r["budget"]) if r.get("budget") else state.get("budget"),
         "filters":        new_filters,
         "pet_profile":    new_pet,
+        "is_pet_override": is_new_pet,
         "filter_relaxation_count": state.get("filter_relaxation_count", 0) if not r.get("category") else 0,
+        **overridden_metadata
     }

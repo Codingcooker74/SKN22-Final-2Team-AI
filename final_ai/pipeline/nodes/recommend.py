@@ -13,6 +13,10 @@ from final_ai.pipeline.utils import (
 
 # ── profile_node ──────────────────────────────────────────────────────────────
 
+# 핵심 동물성 명사 (1글자라도 상품명 등에서 무조건 차단해야 하는 것들)
+CORE_ANIMAL_PLANTS = {"닭", "소", "양", "말", "굴", "게", "꿀", "오리", "연어", "참치", "돼지"}
+
+
 @traceable(name="profile_node", run_type="chain")
 def profile_node(state: ChatState) -> dict:
     """
@@ -28,11 +32,13 @@ def profile_node(state: ChatState) -> dict:
     food_prefs = list(state.get("food_preferences") or [])
     breed_context = ""
     health_traits = ""
+    budget_val = None
 
     # 1. DB 또는 현재 상태에서 기초 정보 확보
     target_breed = pet_profile.get("breed")
     target_species = pet_profile.get("species")
     target_age = 0
+    is_pet_override = state.get("is_pet_override", False)
     
     # 나이(숫자) 추출 시도 (예: "7살" -> 7)
     try:
@@ -42,6 +48,8 @@ def profile_node(state: ChatState) -> dict:
             nums = re.findall(r'\d+', str(age_val))
             if nums: target_age = int(nums[0])
     except: pass
+
+    pet_mismatch = False
 
     if user_id:
         conn = None
@@ -64,26 +72,46 @@ def profile_node(state: ChatState) -> dict:
             pet_row = cur.fetchone()
 
             if pet_row:
-                pet_id = pet_row["pet_id"]
-                target_breed = pet_row["breed"] or target_breed
-                target_species = pet_row["species"] or target_species
-                target_age = pet_row["age_years"] or target_age
+                # [불일치 검증 로직 추가]
+                db_species = normalize_pet_species(pet_row["species"])
+                chat_species = normalize_pet_species(target_species)
+                db_breed = pet_row["breed"]
                 
-                pet_profile.update({
-                    "name":    pet_row["name"],
-                    "species": pet_row["species"],
-                    "breed":   pet_row["breed"],
-                    "age":     f"{pet_row['age_years']}세 {pet_row['age_months']}개월",
-                    "weight":  f"{pet_row['weight_kg']}kg",
-                    "gender":  pet_row["gender"],
-                })
-
-                cur.execute("SELECT concern FROM pet_health_concern WHERE pet_id = %s", (pet_id,))
-                health_concerns = [r[0] for r in cur.fetchall()] or health_concerns
-                cur.execute("SELECT ingredient FROM pet_allergy WHERE pet_id = %s", (pet_id,))
-                allergies = [r[0] for r in cur.fetchall()] or allergies
-                cur.execute("SELECT food_type FROM pet_food_preference WHERE pet_id = %s", (pet_id,))
-                food_prefs = [r[0] for r in cur.fetchall()] or food_prefs
+                # 1. 종 불일치 체크
+                if chat_species and db_species != chat_species:
+                    pet_mismatch = True
+                # 2. 품종 불일치 체크 (채팅에서 품종을 언급 도중 등록 품종과 다를 때)
+                if target_breed and db_breed != target_breed:
+                    pet_mismatch = True
+                
+                # 불일치가 없을 때만 프로필 업데이트 수행 (오버라이드 로직 대체)
+                if not pet_mismatch:
+                    pet_id = pet_row["pet_id"]
+                    target_breed = pet_row["breed"] or target_breed
+                    target_species = pet_row["species"] or target_species
+                    target_age = pet_row["age_years"] or target_age
+                    
+                    pet_profile.update({
+                        "name":    pet_row["name"],
+                        "species": pet_row["species"],
+                        "breed":   pet_row["breed"],
+                        "age":     f"{pet_row['age_years']}세 {pet_row['age_months']}개월",
+                        "weight":  f"{pet_row['weight_kg']}kg",
+                        "gender":  pet_row["gender"],
+                    })
+                    
+                    # 예산 범위 매핑
+                    budget_raw = pet_row.get("budget_range")
+                    if budget_raw == "under_5":    budget_val = 50000
+                    elif budget_raw == "5_10":     budget_val = 100000
+                    elif budget_raw == "10_20":    budget_val = 200000
+                    
+                    cur.execute("SELECT concern FROM pet_health_concern WHERE pet_id = %s", (pet_id,))
+                    health_concerns = [r[0] for r in cur.fetchall()] or health_concerns
+                    cur.execute("SELECT ingredient FROM pet_allergy WHERE pet_id = %s", (pet_id,))
+                    allergies = [r[0] for r in cur.fetchall()] or allergies
+                    cur.execute("SELECT food_type FROM pet_food_preference WHERE pet_id = %s", (pet_id,))
+                    food_prefs = [r[0] for r in cur.fetchall()] or food_prefs
 
         except Exception as e:
             print(f"[PROFILE] DB 조회 중 오류: {e}")
@@ -146,7 +174,9 @@ def profile_node(state: ChatState) -> dict:
         "allergies":        allergies,
         "food_preferences": food_prefs,
         "breed_context":    breed_context,
-        "health_traits":    health_traits
+        "health_traits":    health_traits,
+        "budget":           budget_val,
+        "pet_mismatch":     pet_mismatch
     }
 
 
@@ -221,7 +251,7 @@ def search_node(state: ChatState) -> dict:
 
     candidates = hybrid_search_pg(
         query=query,
-        top_k=20,
+        top_k=50,
         pet_type=pt_kr,
         category=category,
         subcategory=subcategory,
@@ -231,9 +261,88 @@ def search_node(state: ChatState) -> dict:
     # 알레르기 post-filter
     allergies = state.get("allergies") or []
     if allergies:
+        from kiwipiepy import Kiwi
+        kiwi = Kiwi()
+        
+        # 1. 알레르기 키워드에서 핵심 명사 추출
+        stop_nouns = {"고기", "가루", "분말", "생물", "제품", "성분", "첨가물", "함유", "용", "포함"}
+        # 1글자 동물 키워드가 포함되어도 무시해야 할 단어들 (오탐 방지)
+        safe_words = {"말티즈", "소프트", "소화", "소형", "소형견", "소프", "말티", "소중형", "말랑"}
+        
+        def get_roots(text_list):
+            roots = set()
+            for text in text_list:
+                text_lower = str(text).lower()
+                # A. 형태소 분석 기반 추출
+                for token in kiwi.tokenize(text_lower):
+                    if token.tag.startswith("NN"):
+                        if token.form not in stop_nouns and len(token.form) >= 1:
+                            roots.add(token.form)
+                # B. 핵심 동물성 키워드 강제 추출 (복합어/미분절 대응)
+                # 오탐 방지를 위해 safe_words가 포함된 경우 해당 단어를 제외하고 검사하거나 전처리
+                cleaned_text = text_lower
+                for sw in safe_words:
+                    cleaned_text = cleaned_text.replace(sw, " ")
+                
+                for animal in CORE_ANIMAL_PLANTS:
+                    if animal in cleaned_text:
+                        roots.add(animal)
+                # C. 원문 자체 추가
+                roots.add(text_lower)
+            return roots
+
+        allergy_roots = get_roots(allergies)
+        print(f"[SEARCH] Allergy Roots: {allergy_roots}")
+
         def is_safe(c):
-            ingredients = str(c.get("ingredient_text_ocr") or "").lower()
-            return not any(a.lower() in ingredients for a in allergies)
+            ocr_text = str(c.get("ingredient_text_ocr") or "").lower()
+            goods_name = str(c.get("goods_name") or "").lower()
+
+            for r in allergy_roots:
+                if len(r) > 1:
+                    if r in ocr_text or r in goods_name: return False
+                else:
+                    if r in CORE_ANIMAL_PLANTS:
+                        # [오탐 방지] 1글자 코어 동물(말, 소 등)이 말티즈, 소프트 등의 일부인 경우 제외
+                        c_ocr = ocr_text
+                        c_name = goods_name
+                        for sw in safe_words:
+                            c_ocr = c_ocr.replace(sw, " ")
+                            c_name = c_name.replace(sw, " ")
+                        
+                        if r in c_ocr or r in c_name: return False
+                    else:
+                        # 일반 1글자 어근은 오탐 방지를 위해 공백 포함 체크
+                        if f" {r} " in f" {ocr_text} " or f" {r} " in f" {goods_name} ":
+                            return False
+
+            # B. 메인 성분 리스트 검사 (형태소 단위 체크)
+            m_ingredients = c.get("main_ingredients") or []
+            if isinstance(m_ingredients, str):
+                import json
+                try: m_ingredients = json.loads(m_ingredients)
+                except: m_ingredients = [m_ingredients]
+            
+            for ing in m_ingredients:
+                ing_lower = str(ing).lower()
+                # 1. 단순 전체 포함 여부 (이미 구현됨)
+                if any(a.lower() in ing_lower for a in allergies):
+                    return False
+                
+                # 2. 형태소 어근 교집합 및 상호 포함 체크
+                ing_roots = get_roots([ing_lower])
+                
+                for r_all in allergy_roots:
+                    for r_ing in ing_roots:
+                        # 완벽 일치
+                        if r_all == r_ing: return False
+                        # 상호 포함 관계 (예: 닭고기-닭, 닭가슴살-닭)
+                        if (r_all in r_ing) or (r_ing in r_all):
+                            # 오탐 방지: 둘 중 하나가 코어 동물이거나, 겹치는 어근이 충분히 길 때
+                            if (r_all in CORE_ANIMAL_PLANTS) or (r_ing in CORE_ANIMAL_PLANTS) or (len(set(r_all) & set(r_ing)) >= 2):
+                                return False
+            return True
+            
         candidates = [c for c in candidates if is_safe(c)]
 
     print(f"[SEARCH] {len(candidates)}개 후보 (relaxation={relaxation})")
@@ -289,6 +398,10 @@ def rerank_node(state: ChatState) -> dict:
         has_pop       = pop_scores[i]  is not None
         has_sentiment = sent_scores[i] is not None
         has_repeat    = rep_scores[i]  is not None
+        
+        # [변수 초기화] 디버그 로그용
+        gamma_v = float(sent_scores[i]) if has_sentiment else 0.0
+        delta_v = float(rep_scores[i])  if has_repeat    else 0.0
 
         if not has_pop and not has_sentiment and not has_repeat:
             score = norm_rrf[i]
@@ -297,8 +410,6 @@ def rerank_node(state: ChatState) -> dict:
             v_pop = float(pop_scores[i]) if has_pop else 0.0
             score = _ALPHA * norm_rrf[i] + 0.35 * float(norm_pop[i])
         else:
-            gamma_v = float(sent_scores[i]) if has_sentiment else 0.0
-            delta_v = float(rep_scores[i])  if has_repeat    else 0.0
             score   = (
                 _ALPHA * norm_rrf[i]
                 + _BETA  * float(norm_pop[i])
@@ -330,7 +441,6 @@ def rerank_node(state: ChatState) -> dict:
             trait_keywords = [k for k in ["슬개골", "기관허탈", "눈물", "피부", "관절", "체중", "소화", "신장", "심장"] if k in health_traits]
             if any(k in product_tags for k in trait_keywords):
                 score += 0.10
-                print(f"[RERANK] 품종 특성 매칭 가산점(+0.1): {c.get('goods_name')} (매칭: {trait_keywords})")
 
         scored.append((score, c))
 
