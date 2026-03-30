@@ -90,6 +90,8 @@ jobs:
           POSTGRES_HOST=test-postgres
           POSTGRES_PORT=5432
           OPENAI_API_KEY=test-key
+          DOCKER_USERNAME=
+          DOCKER_PASSWORD=
           EOF
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
           trap 'docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env down -v --remove-orphans' EXIT
@@ -158,10 +160,16 @@ jobs:
           LANGSMITH_PROJECT=${{ secrets.LANGSMITH_PROJECT }}
           LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}
           LANGSMITH_WORKSPACE_ID=${{ secrets.LANGSMITH_WORKSPACE_ID }}
+
+          # Docker Hub credentials for private image pull
+          DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKER_PASSWORD=${{ secrets.DOCKERHUB_TOKEN }}
           EOF
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
+          # .ebextensions 디렉토리 복사 (docker login 설정)
+          cp -r deploy/eb/test-fastapi/.ebextensions .deploy-fastapi/.ebextensions
           cd .deploy-fastapi
-          zip -r ../fastapi-deploy.zip docker-compose.yml .env
+          zip -r ../fastapi-deploy.zip docker-compose.yml .env .ebextensions
 
       - name: Deploy FastAPI to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v22
