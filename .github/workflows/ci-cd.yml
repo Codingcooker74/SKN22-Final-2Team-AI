@@ -126,7 +126,10 @@ jobs:
 
       - name: Resolve image tag
         id: fastapi-meta
-        run: echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          short_sha="$(git rev-parse --short HEAD)"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "version_label=fastapi-${short_sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -199,7 +202,7 @@ jobs:
           region: ${{ env.AWS_REGION }}
           application_name: ${{ env.FASTAPI_EB_APP_NAME }}
           environment_name: ${{ env.FASTAPI_EB_ENV_NAME }}
-          version_label: fastapi-${{ steps.fastapi-meta.outputs.short_sha }}
+          version_label: ${{ steps.fastapi-meta.outputs.version_label }}
           deployment_package: fastapi-deploy.zip
           use_existing_version_if_available: true
           wait_for_deployment: true
