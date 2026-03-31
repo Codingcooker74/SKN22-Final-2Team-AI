@@ -35,7 +35,7 @@ concurrency:
 
 env:
   AWS_REGION: ap-northeast-2
-  FASTAPI_IMAGE_REPO: kimheejoon91/test-tailtalk-fastapi
+  FASTAPI_IMAGE_REPO: 027099020675.dkr.ecr.ap-northeast-2.amazonaws.com/test-tailtalk-fastapi
   FASTAPI_EB_APP_NAME: test-tailtalk-fastapi
   FASTAPI_EB_ENV_NAME: test-tailtalk-fastapi-env
   FASTAPI_HEALTH_PATH: /health
@@ -91,18 +91,10 @@ jobs:
           POSTGRES_PORT=5432
           OPENAI_API_KEY=test-key
           EOF
-          mkdir -p .deploy-fastapi/.ebextensions
-          cat <<'EOF' > .deploy-fastapi/.ebextensions/00_private_registry_env.config
-          option_settings:
-            aws:elasticbeanstalk:application:environment:
-              DOCKER_USERNAME: "test-user"
-              DOCKER_PASSWORD: "test-password"
-          EOF
           cp -r deploy/eb/test-fastapi/.platform .deploy-fastapi/.platform
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
-          test -f .deploy-fastapi/.ebextensions/00_private_registry_env.config
-          test -f .deploy-fastapi/.platform/hooks/prebuild/01_docker_login.sh
-          test -f .deploy-fastapi/.platform/confighooks/prebuild/01_docker_login.sh
+          test -f .deploy-fastapi/.platform/hooks/prebuild/01_ecr_login.sh
+          test -f .deploy-fastapi/.platform/confighooks/prebuild/01_ecr_login.sh
           trap 'docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env down -v --remove-orphans' EXIT
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env up -d
           sleep 5
@@ -131,11 +123,15 @@ jobs:
           echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
           echo "version_label=fastapi-${short_sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build & push FastAPI image
         uses: docker/build-push-action@v6
@@ -148,9 +144,6 @@ jobs:
             ${{ env.FASTAPI_IMAGE_REPO }}:${{ steps.fastapi-meta.outputs.short_sha }}
 
       - name: Create FastAPI deployment bundle
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           rm -rf .deploy-fastapi fastapi-deploy.zip
           mkdir -p .deploy-fastapi
@@ -176,23 +169,10 @@ jobs:
           LANGSMITH_ENDPOINT=${{ secrets.LANGSMITH_ENDPOINT }}
           LANGSMITH_WORKSPACE_ID=${{ secrets.LANGSMITH_WORKSPACE_ID }}
           EOF
-          mkdir -p .deploy-fastapi/.ebextensions
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          Path(".deploy-fastapi/.ebextensions/00_private_registry_env.config").write_text(
-              "option_settings:\n"
-              "  aws:elasticbeanstalk:application:environment:\n"
-              f"    DOCKER_USERNAME: {json.dumps(os.environ['DOCKERHUB_USERNAME'])}\n"
-              f"    DOCKER_PASSWORD: {json.dumps(os.environ['DOCKERHUB_TOKEN'])}\n"
-          )
-          PY
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
           cp -r deploy/eb/test-fastapi/.platform .deploy-fastapi/.platform
           cd .deploy-fastapi
-          zip -r ../fastapi-deploy.zip docker-compose.yml .env .ebextensions .platform
+          zip -r ../fastapi-deploy.zip docker-compose.yml .env .platform
 
       - name: Deploy FastAPI to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v22
@@ -206,13 +186,6 @@ jobs:
           deployment_package: fastapi-deploy.zip
           use_existing_version_if_available: true
           wait_for_deployment: true
-
-      - name: Configure AWS credentials for verification
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Resolve FastAPI environment URL
         id: fastapi-env
