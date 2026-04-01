@@ -17,6 +17,8 @@ from final_ai.pipeline.state import ChatState
 _llm = None
 LLM_MODEL = "gpt-4o-mini"
 LLM_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "20"))
+POSTGRES_CONNECT_TIMEOUT_SECONDS = int(os.getenv("POSTGRES_CONNECT_TIMEOUT_SECONDS", "5"))
+POSTGRES_STATEMENT_TIMEOUT_MS = int(os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "20000"))
 EMBED_MODEL_NAME = os.getenv("FASTEMBED_MODEL", "intfloat/multilingual-e5-large")
 _SUPPORTED_EMBED_MODELS = {
     model["model"]: model for model in TextEmbedding.list_supported_models()
@@ -244,6 +246,9 @@ def get_db_connection():
         password=os.getenv("POSTGRES_PASSWORD", "finalprojectljs1908"),
         host=host,
         port=os.getenv("POSTGRES_PORT", "5432"),
+        connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS,
+        options=f"-c statement_timeout={POSTGRES_STATEMENT_TIMEOUT_MS}",
+        application_name="tailtalk-fastapi",
     )
 
 # ── 임베딩 모델 (lazy loading) ──────────────────────────────────────────────────
