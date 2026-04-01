@@ -6,6 +6,7 @@ from final_ai.pipeline.utils import (
     DOMAIN_INTENT_TO_CATEGORY,
     LLM_MODEL,
     build_pet_context,
+    ensure_request_active,
     get_db_connection,
     llm,
 )
@@ -71,6 +72,7 @@ def general_node(state: ChatState) -> dict:
         f"다음 질문을 반려동물 정보를 반영해 검색에 최적화된 한 문장으로 재작성하세요.\n"
         f"펫 정보: {pet_ctx}\n질문: {state['user_input']}"
     )
+    ensure_request_active()
     refined = llm.chat.completions.create(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],

@@ -4,7 +4,7 @@ from pathlib import Path
 from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import (
-    LLM_MODEL, llm, get_user_pets, get_pet_full_profile
+    LLM_MODEL, ensure_request_active, llm, get_user_pets, get_pet_full_profile
 )
 
 CATEGORY_FILE = Path(__file__).resolve().parents[1] / "data" / "category.json"
@@ -97,6 +97,7 @@ def intent_node(state: ChatState) -> dict:
         }
         context = f"\n이전 추출 정보: {json.dumps(prev_data, ensure_ascii=False)}"
 
+    ensure_request_active()
     res = llm.chat.completions.create(
         model=LLM_MODEL,
         messages=[
@@ -284,4 +285,3 @@ def intent_node(state: ChatState) -> dict:
         "filter_relaxation_count": state.get("filter_relaxation_count", 0) if not r.get("category") else 0,
         **overridden_metadata
     }
-

@@ -1,5 +1,6 @@
 import json
 import asyncio
+import threading
 import uuid
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
@@ -10,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from final_ai.observability import traceable
 from final_ai.pipeline.chatbot_graph import build_graph
+from final_ai.pipeline.utils import RequestCancelled, bind_request_cancel_event
 from final_ai.schemas.chat import ChatRequest
 
 router = APIRouter()
@@ -39,7 +41,7 @@ def _json_default(value):
 def _sse(event_type: str, data: dict) -> str:
     return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False, default=_json_default)}\n\n"
 
-async def _stream(req: ChatRequest):
+async def _stream(req: ChatRequest, request: Request):
     initial_state = {
         "user_input": req.message,
         "pet_profile": req.pet_profile,
@@ -89,12 +91,23 @@ async def _stream(req: ChatRequest):
     # 제일 먼저 실시간 멘트 전송 (name에 DB의 실제 이름이 들어감)
     yield _sse("info", {"content": f"{pet_name}에 어울리는 {category}를 찾는 중입니다..."})
 
-    loop = asyncio.get_event_loop()
+    cancel_event = threading.Event()
     try:
-        final_state = await loop.run_in_executor(
-            None,
-            lambda: _invoke_graph(initial_state, config),
-        )
+        with bind_request_cancel_event(cancel_event):
+            graph_task = asyncio.create_task(
+                asyncio.to_thread(_invoke_graph, initial_state, config),
+            )
+
+            while not graph_task.done():
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    graph_task.cancel()
+                    return
+                await asyncio.sleep(0.25)
+
+            final_state = await graph_task
+    except RequestCancelled:
+        return
     except Exception as e:
         yield _sse("error", {"message": str(e)})
         return
@@ -105,6 +118,9 @@ async def _stream(req: ChatRequest):
     # 응답 스트리밍
     words = response_text.split(" ")
     for i, word in enumerate(words):
+        if await request.is_disconnected():
+            cancel_event.set()
+            return
         chunk = word if i == 0 else " " + word
         yield _sse("token", {"content": chunk})
         await asyncio.sleep(0.01)
@@ -116,9 +132,9 @@ async def _stream(req: ChatRequest):
 
 # 1. POST / (기본 채팅)
 @router.post("/")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     return StreamingResponse(
-        _stream(req),
+        _stream(req, request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -143,10 +159,10 @@ async def create_session(req: SessionCreateRequest):
 
 # 3. POST /sessions/{session_id}/messages/ (Django의 메시지 전송 대응)
 @router.post("/sessions/{session_id}/messages/")
-async def session_chat(session_id: str, req: ChatRequest):
+async def session_chat(session_id: str, req: ChatRequest, request: Request):
     # thread_id를 장고의 session_id로 고정하여 상태 유지
     req.thread_id = session_id
-    return await chat(req)
+    return await chat(req, request)
 
 # 4. GET /sessions/{session_id}/messages/ (Django의 메시지 조회 대응)
 @router.get("/sessions/{session_id}/messages/")

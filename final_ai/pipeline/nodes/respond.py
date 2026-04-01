@@ -4,6 +4,7 @@ from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import (
     LLM_MODEL,
     build_pet_context,
+    ensure_request_active,
     llm,
     translate_health_concerns,
     get_user_pets
@@ -125,6 +126,7 @@ def respond_node(state: ChatState) -> dict:
     )
 
     try:
+        ensure_request_active()
         response = llm.chat.completions.create(
             model=LLM_MODEL,
             messages=[

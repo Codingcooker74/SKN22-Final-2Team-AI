@@ -1,5 +1,8 @@
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import psycopg2
 from dotenv import load_dotenv, find_dotenv
 
@@ -13,11 +16,32 @@ from final_ai.pipeline.state import ChatState
 # ── 클라이언트 (lazy init) ──────────────────────────────────────────────────────
 _llm = None
 LLM_MODEL = "gpt-4o-mini"
+LLM_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "20"))
 EMBED_MODEL_NAME = os.getenv("FASTEMBED_MODEL", "intfloat/multilingual-e5-large")
 _SUPPORTED_EMBED_MODELS = {
     model["model"]: model for model in TextEmbedding.list_supported_models()
 }
 _embed_model_unavailable_reason = None
+_request_cancel_event: ContextVar[object | None] = ContextVar("request_cancel_event", default=None)
+
+
+class RequestCancelled(RuntimeError):
+    pass
+
+
+@contextmanager
+def bind_request_cancel_event(cancel_event):
+    token = _request_cancel_event.set(cancel_event)
+    try:
+        yield
+    finally:
+        _request_cancel_event.reset(token)
+
+
+def ensure_request_active() -> None:
+    cancel_event = _request_cancel_event.get()
+    if cancel_event is not None and cancel_event.is_set():
+        raise RequestCancelled("Client disconnected")
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -106,7 +130,7 @@ def get_llm():
     global _llm
     if _llm is None:
         from openai import OpenAI
-        _llm = wrap_openai(OpenAI())
+        _llm = wrap_openai(OpenAI(timeout=LLM_TIMEOUT_SECONDS, max_retries=0))
     return _llm
 
 # 기존 코드 호환을 위한 별칭 (노드들이 llm.chat.completions.create 형식으로 호출)
