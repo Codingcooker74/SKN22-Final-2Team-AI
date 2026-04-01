@@ -11,6 +11,9 @@ class ChatState(TypedDict):
     # 사용자 / 펫 (API 요청 페이로드에서 주입, DB 조회 없음)
     user_id:          str | None
     target_pet_id:    str | None
+    pending_pet_ids:  list[str]      # 추천 대기 중인 펫 ID 목록
+    is_pet_switched:  bool            # 현재 턴에서 펫 전환 발생 여부
+    switched_pet_name: str | None    # 전환된 펫의 이름 (응답 출력용)
     pet_profile:      dict | None    # species(dog/cat), breed, age, weight, gender
     health_concerns:  list[str]      # PET_HEALTH_CONCERN
     allergies:        list[str]      # PET_ALLERGY
@@ -34,6 +37,7 @@ class ChatState(TypedDict):
     reranked_results:          list[dict]
     filter_relaxation_count:   int       # 추천 필터 완화 횟수
     recommend_retry_pending:   bool      # RERANK 이후 완화 재검색 필요 여부
+    form_hint:                 str | None  # 캔/파우치 등 제형 힌트 (사료/간식 구분 전까지 보관)
 
     # domain_qa 플로우
     domain_contexts: list[str]   # RAG 검색 결과

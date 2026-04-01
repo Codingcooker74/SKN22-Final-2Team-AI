@@ -517,3 +517,72 @@ def build_pet_context(state: ChatState) -> str:
     if state.get("food_preferences"):
         parts.append(f"선호사료타입: {', '.join(state['food_preferences'])}")
     return " / ".join(parts) if parts else "펫 프로필 없음"
+
+
+def get_user_pets(user_id: str) -> list[dict]:
+    """사용자의 전체 펫 목록(ID, 이름) 조회"""
+    if not user_id: return []
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT pet_id, name, species, breed, age_years FROM pet WHERE user_id = %s", (user_id,))
+        rows = cur.fetchall()
+        return [{"pet_id": str(r[0]), "name": r[1], "species": r[2], "breed": r[3], "age": f"{r[4]}살"} for r in rows]
+    except Exception as e:
+        print(f"[get_user_pets] 오류: {e}")
+        return []
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+def get_pet_full_profile(pet_id: str) -> dict:
+    """특정 펫의 상세 프로필 및 메타데이터(알러지, 관심사 등) 전체 조회"""
+    if not pet_id: return {}
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # 1. 기본 정보
+        cur.execute("SELECT name, species, breed, age_years, gender, weight_kg FROM pet WHERE pet_id = %s", (pet_id,))
+        base = cur.fetchone()
+        if not base: return {}
+        
+        res = {
+            "pet_id": pet_id,
+            "pet_profile": {
+                "name": base[0],
+                "species": base[1],
+                "breed": base[2],
+                "age": f"{base[3]}살",
+                "gender": base[4],
+                "weight": float(base[5]) if base[5] else None
+            },
+            "health_concerns": [],
+            "allergies": [],
+            "food_preferences": []
+        }
+        
+        # 2. 건강 관심사
+        cur.execute("SELECT concern FROM pet_health_concern WHERE pet_id = %s", (pet_id,))
+        res["health_concerns"] = [r[0] for r in cur.fetchall()]
+        
+        # 3. 알러지
+        cur.execute("SELECT ingredient FROM pet_allergy WHERE pet_id = %s", (pet_id,))
+        res["allergies"] = [r[0] for r in cur.fetchall()]
+        
+        # 4. 사료 선호도
+        cur.execute("SELECT food_type FROM pet_food_preference WHERE pet_id = %s", (pet_id,))
+        res["food_preferences"] = [r[0] for r in cur.fetchall()]
+        
+        return res
+    except Exception as e:
+        print(f"[get_pet_full_profile] 오류: {e}")
+        return {}
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
