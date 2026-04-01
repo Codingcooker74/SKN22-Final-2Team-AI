@@ -5,6 +5,7 @@ from final_ai.pipeline.state import ChatState
 from final_ai.pipeline.utils import (
     LLM_MODEL,
     build_pet_context,
+    ensure_request_active,
     hybrid_search_pg,
     llm,
     normalize_pet_species,
@@ -219,6 +220,7 @@ def query_node(state: ChatState) -> dict:
         f"원래 질문: {state['user_input']}"
     )
     try:
+        ensure_request_active()
         search_query = llm.chat.completions.create(
             model=LLM_MODEL,
             messages=[{"role": "user", "content": prompt}],
