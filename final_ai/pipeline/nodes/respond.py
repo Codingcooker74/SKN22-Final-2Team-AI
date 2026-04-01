@@ -6,8 +6,36 @@ from final_ai.pipeline.utils import (
     build_pet_context,
     llm,
     translate_health_concerns,
+    get_user_pets
 )
 
+# RESPOND_SYSTEM = """\
+# 당신은 반려동물 쇼핑 서비스의 친절한 AI 어시스턴트입니다.
+# 사용자의 펫 정보와 품종별 건강 지식을 결합하여 개인화된 답변을 제공합니다.
+
+# [답변 형식 규칙]
+# 1. 추천 의도(recommend)가 포함된 경우 반드시 **섹션 사이마다 빈 줄(Enter 2번)**을 넣어 다음 형식을 엄격히 준수하세요:
+
+#    "{펫이름}에 어울리는 상품을 추천드릴게요.
+   
+#    등록된 건강 관심사 : {건강관심사} (값이 있는 경우에만 표시)
+   
+#    종에 해당하는 건강특징: {제공된_건강특징}
+   
+#    상품 추천 이유:
+#    1. {첫 번째 추천 이유: 건강특징과 상품 간의 연관성 설명}
+#    2. {두 번째 추천 이유}
+   
+#    추천 상품을 확인해 주세요!"
+
+# 2. 도메인 지식 답변(domain_qa)이 포함된 경우:
+#    - 관련 지식을 친절하게 설명하고 섹션 구분 시 반드시 빈 줄(Enter 2번)을 활용하세요.
+#    - 답변 서두에 등록된 건강 관심사가 있다면 "등록된 건강 관심사 : {건강관심사}" 형식을 포함하세요.
+
+# 3. 일반 지점:
+#    - 답변의 각 주요 단락 사이에는 **반드시 한 줄의 빈 줄**을 넣어 가독성을 높이세요.
+#    - 상품 목록 자체는 언급하지 마세요 (우측 패널에 표시됨).
+# """
 RESPOND_SYSTEM = """\
 당신은 반려동물 쇼핑 서비스의 친절한 AI 어시스턴트입니다.
 사용자의 펫 정보와 품종별 건강 지식을 결합하여 개인화된 답변을 제공합니다.
@@ -17,21 +45,19 @@ RESPOND_SYSTEM = """\
 
    "{펫이름}에 어울리는 상품을 추천드릴게요.
    
-   등록된 건강 관심사 : {건강관심사} (값이 있는 경우에만 표시)
-   
-   종에 해당하는 건강특징: {제공된_건강특징}
-   
-   상품 추천 이유:
-   1. {첫 번째 추천 이유: 건강특징과 상품 간의 연관성 설명}
-   2. {두 번째 추천 이유}
-   
    추천 상품을 확인해 주세요!"
 
 2. 도메인 지식 답변(domain_qa)이 포함된 경우:
    - 관련 지식을 친절하게 설명하고 섹션 구분 시 반드시 빈 줄(Enter 2번)을 활용하세요.
    - 답변 서두에 등록된 건강 관심사가 있다면 "등록된 건강 관심사 : {건강관심사}" 형식을 포함하세요.
 
-3. 일반 지점:
+3. **펫 프로필 전환 안내**:
+   - 만약 '펫 전환 발생' 정보가 있다면, 답변 서두에 "애칭 {전환된_펫이름}의 정보를 바탕으로 다시 추천해 드릴게요!" 라는 문구를 반드시 포함하세요.
+
+4. **대기 중인 펫(Next Pet) 안내**:
+   - 만약 '대기 중인 펫 목록'이 있다면, 답변 마지막에 "혹시 {다음_펫이름}의 추천 상품도 바로 보여드릴까요?" 라는 질문을 던져 대화를 이어가세요.
+
+5. 일반 지점:
    - 답변의 각 주요 단락 사이에는 **반드시 한 줄의 빈 줄**을 넣어 가독성을 높이세요.
    - 상품 목록 자체는 언급하지 마세요 (우측 패널에 표시됨).
 """
@@ -77,9 +103,19 @@ def respond_node(state: ChatState) -> dict:
 
     translated_concerns = translate_health_concerns(health_concerns)
     
+    # 대기 중인 펫 이름 조회
+    pending_ids = state.get("pending_pet_ids") or []
+    pending_names = []
+    if pending_ids and state.get("user_id"):
+        all_pets = get_user_pets(state["user_id"])
+        pending_names = [p["name"] for p in all_pets if p["pet_id"] in pending_ids]
+
     user_msg = (
         f"현재 상황 정보:\n"
         f"- 펫 이름: {pet_name}\n"
+        f"- 펫 전환 발생: {'YES' if state.get('is_pet_switched') else 'NO'}\n"
+        f"- 전환된 펫 이름: {state.get('switched_pet_name') or 'N/A'}\n"
+        f"- 대기 중인 펫 목록: {', '.join(pending_names) if pending_names else '없음'}\n"
         f"- 카테고리: {category}\n"
         f"- 등록된 건강 관심사: {', '.join(translated_concerns) if translated_concerns else '없음'}\n"
         f"- 건강 특징: {health_traits}\n"

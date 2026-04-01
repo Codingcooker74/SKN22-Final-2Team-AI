@@ -29,23 +29,35 @@ def clarify_node(state: ChatState) -> dict:
     elif pet_species_profile == "cat":
         pet_species_kr = "고양이"
     else:
-        pet_species_kr = pet_species_profile
+        pet_species_kr = None
 
     current_pet_type = pet_type_detected or pet_species_kr
     category = filters.get("category")
 
     if "recommend" in intents and not current_pet_type:
-        q = "어떤 반려동물을 키우고 계세요? 강아지인가요, 고양이인가요?"
+        if "popularity" in intents:
+            q = "인기 있는 상품을 찾으시는군요! 어떤 반려동물(강아지/고양이)을 위한 상품인가요?"
+        else:
+            q = "어떤 반려동물을 키우고 계세요? 강아지인가요, 고양이인가요?"
+    elif "recommend" in intents and state.get("form_hint"):
+        # 캔/파우치 등 제형이 감지됐지만 사료인지 간식인지 불명확한 경우
+        form = state["form_hint"]
+        pet_name = current_pet_type or "반려동물"
+        q = f"{form}을 찾으시는군요! {pet_name}용 주식(사료)으로 드릴까요, 간식으로 드릴까요?"
     elif "recommend" in intents and not category:
-        avail_cats = list(_categories.get(current_pet_type, {}).keys())
+        # 해당 펫 타입의 대분류 목록 가져오기
+        avail_cats = list(_categories.get(current_pet_type, {}).keys()) if current_pet_type else []
         if not avail_cats: # fallback
             avail_cats = ["사료", "간식", "용품"]
-        q = f"{current_pet_type}를 위한 어떤 상품을 찾으시나요? ({', '.join(avail_cats)})"
+        
+        pop_str = " 인기 상품" if "popularity" in intents else ""
+        q = f"{current_pet_type}를 위한 어떤{pop_str}을 찾으시나요? ({', '.join(avail_cats)})"
     else:
         q = "반려동물 상품 추천이나 건강 정보 상담을 도와드릴 수 있어요. 궁금한 점이 있으시면 말씀해 주세요!"
 
     count = state.get("clarification_count", 0) + 1
     print(f"[CLARIFY] count={count}: {q}")
+    
     return {
         "messages":            [AIMessage(content=q)],
         "response":            q,

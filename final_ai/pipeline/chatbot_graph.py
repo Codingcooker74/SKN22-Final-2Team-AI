@@ -40,6 +40,9 @@ def route_intent(state: ChatState):
         # pet_type이 AI 추출 결과에도 없고, 펫 프로필에도 없는 경우
         if not filters.get("pet_type") and not pet_profile.get("species"):
             return "clarify"
+        # form_hint가 있으면 사료/간식 구분 재질문 필요
+        if state.get("form_hint"):
+            return "clarify"
         # 카테고리가 없는 경우 (필터 완화 중이 아닐 때만)
         if not filters.get("category") and relaxation == 0:
             return "clarify"

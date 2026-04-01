@@ -77,14 +77,17 @@ def profile_node(state: ChatState) -> dict:
                 chat_species = normalize_pet_species(target_species)
                 db_breed = pet_row["breed"]
                 
-                # 1. 종 불일치 체크
-                if chat_species and db_species != chat_species:
-                    pet_mismatch = True
-                # 2. 품종 불일치 체크 (채팅에서 품종을 언급 도중 등록 품종과 다를 때)
-                if target_breed and db_breed != target_breed:
-                    pet_mismatch = True
+                # 펫 전환이 이미 처리된 경우(is_pet_switched), DB에서 가져온 정보이므로 불일치 체크를 건너뜀
+                is_pet_switched = state.get("is_pet_switched", False)
+                if not is_pet_switched:
+                    # 1. 종 불일치 체크
+                    if chat_species and db_species != chat_species:
+                        pet_mismatch = True
+                    # 2. 품종 불일치 체크 (채팅에서 품종을 언급 도중 등록 품종과 다를 때)
+                    if target_breed and db_breed != target_breed:
+                        pet_mismatch = True
                 
-                # 불일치가 없을 때만 프로필 업데이트 수행 (오버라이드 로직 대체)
+                # 불일치가 없거나 펫이 전환된 상황일 때만 프로필 업데이트 수행
                 if not pet_mismatch:
                     pet_id = pet_row["pet_id"]
                     target_breed = pet_row["breed"] or target_breed
@@ -192,11 +195,20 @@ def query_node(state: ChatState) -> dict:
     filters  = state.get("filters") or {}
     relaxation = state.get("filter_relaxation_count", 0)
 
-    category_hint    = filters.get("category") or ""
-    subcategory_hint = filters.get("subcategory") or "" if relaxation == 0 else ""
+    category_hint = filters.get("category") or ""
+    raw_sub = filters.get("subcategory") or ""
+    # 재검색(relaxation>0) 중에도 STRICT_SUBCATEGORIES(캔/파우치 등 제형)는 절대 해제하지 않음
+    subcategory_hint = raw_sub if (relaxation == 0 or raw_sub in STRICT_SUBCATEGORIES) else ""
 
     prominent_concerns = ", ".join(state.get("health_concerns") or [])
-    concern_clause = f"특히 다음 건강 고민사항을 반드시 해결할 수 있는 상품 위주로 검색어를 구성하세요: {prominent_concerns}" if prominent_concerns else ""
+    concern_clause = (
+        f"특히 다음 건강 고민사항을 반드시 해결할 수 있는 상품 위주로 검색어를 구성하세요: {prominent_concerns}\n"
+        f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
+        f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 \"캔\"을 언급하면 반드시 \"캔\"이 포함된 소분류를, \"파우치\"를 언급하면 \"파우치\"가 포함된 소분류를 선택하세요.**"
+    ) if prominent_concerns else (
+        f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
+        f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 \"캔\"을 언급하면 반드시 \"캔\"이 포함된 소분류를, \"파우치\"를 언급하면 \"파우치\"가 포함된 소분류를 선택하세요.**"
+    )
 
     prompt = (
         f"반려동물 상품 검색을 위한 최적화된 한국어 검색어를 한 문장으로만 반환하세요.\n"
@@ -230,6 +242,13 @@ def query_node(state: ChatState) -> dict:
 
 # ── search_node ───────────────────────────────────────────────────────────────
 
+# 완화(Relaxation) 시에도 절대로 해제하지 않을 제형 관련 핵심 소분류
+STRICT_SUBCATEGORIES = {
+    "주식캔", "주식파우치", "간식캔", "간식파우치", "습식사료", "캔/파우치", 
+    "동결건조/에어드라이", "동결/건조간식", "화식", "소프트사료"
+}
+
+
 @traceable(name="search_node", run_type="chain")
 def search_node(state: ChatState) -> dict:
     """
@@ -242,7 +261,13 @@ def search_node(state: ChatState) -> dict:
 
     pet_type    = filters.get("pet_type")
     category    = filters.get("category")
-    subcategory = filters.get("subcategory") if relaxation == 0 else None
+    
+    # [수정] 소분류 필터 적용 로직:
+    # 1. 초기 검색(relaxation=0) 시에는 소분류를 항상 적용.
+    # 2. 완화 검색(relaxation>0) 시에는 일반 소분류는 해제하지만, STRICT_SUBCATEGORIES에 해당하면 유지.
+    subcategory = filters.get("subcategory")
+    if relaxation > 0 and subcategory not in STRICT_SUBCATEGORIES:
+        subcategory = None
     budget      = state.get("budget")
 
     pt_kr = normalize_pet_species(pet_type)
@@ -257,12 +282,133 @@ def search_node(state: ChatState) -> dict:
         subcategory=subcategory,
         budget=budget,
     )
+    print(f"[SEARCH-DEBUG] hybrid_search_pg 반환: {len(candidates)}개 | subcategory={subcategory} | category={category} | pet={pt_kr}")
     # [추가] 샘플/체험팩 상품 강제 제외 (SQL 필터 우회 대비 2차 방어)
     blacklist_words = ["샘플", "맛보기", "체험팩"]
     candidates = [
         c for c in candidates 
         if not any(bw in c.get("goods_name", "") for bw in blacklist_words)
     ]
+    print(f"[SEARCH-DEBUG] 블랙리스트 필터 후: {len(candidates)}개")
+
+    # [수정v2] 제형(캔/파우치) 적극 포함 필터링 (Positive Filter)
+    # - 명확한 캔 전용 subcategory (주식캔, 간식캔): goods_name 조건 없이 통과
+    # - 혼합 subcategory (캔/파우치): goods_name에 해당 제형 키워드가 있어야 통과
+    #   예) 강아지 "캔/파우치" subcategory에서 파우치 제품이 섞여 나오는 것 방지
+
+    PURE_CAN_SUBS   = {"주식캔", "간식캔"}          # 캔 전용 subcategory
+    PURE_POUCH_SUBS = {"주식파우치", "간식파우치"}   # 파우치 전용 subcategory
+    MIXED_SUBS      = {"캔/파우치"}                 # 혼합 subcategory → goods_name으로 추가 판단
+
+    def _get_subs(c: dict) -> list:
+        import ast
+        subs = c.get("subcategory") or []
+        if isinstance(subs, str):
+            try: subs = ast.literal_eval(subs)
+            except: subs = [subs]
+        return subs
+
+    user_input_lower = state["user_input"].lower()
+    print(f"[SEARCH-DEBUG] user_input_lower={user_input_lower!r} | 캔포함={'캔' in user_input_lower} | 파우치포함={'파우치' in user_input_lower}")
+    if "캔" in user_input_lower and "파우치" not in user_input_lower:
+        # 캔 요청 → 캔 전용 subcategory는 무조건 통과,
+        #            혼합(캔/파우치) subcategory는 goods_name에 "캔" 있어야 통과
+        def is_can_product(c):
+            subs = _get_subs(c)
+            name = c.get("goods_name", "")
+            if any(s in PURE_CAN_SUBS for s in subs):
+                return True   # 캔 전용 subcategory → 무조건 통과
+            if any(s in MIXED_SUBS for s in subs) and "캔" in name:
+                return True   # 혼합 subcategory → goods_name에 "캔" 있어야 통과
+            if "캔" in name:
+                return True   # subcategory 없어도 goods_name에 "캔" 있으면 통과
+            return False
+        candidates = [c for c in candidates if is_can_product(c)]
+        print(f"[SEARCH-DEBUG] 캔 필터 후: {len(candidates)}개 | 상품명: {[c.get('goods_name','?')[:30] for c in candidates[:5]]}")
+
+    elif "파우치" in user_input_lower and "캔" not in user_input_lower:
+        # 파우치 요청 → 파우치 전용 subcategory는 무조건 통과,
+        #               혼합(캔/파우치) subcategory는 goods_name에 "캔"이 없어야 통과
+        #               (파우치 상품은 이름에 "캔"이 안 들어감)
+        def is_pouch_product(c):
+            subs = _get_subs(c)
+            name = c.get("goods_name", "")
+            if any(s in PURE_POUCH_SUBS for s in subs):
+                return True   # 파우치 전용 subcategory → 무조건 통과
+            if any(s in MIXED_SUBS for s in subs) and "캔" not in name:
+                return True   # 혼합 subcategory → goods_name에 "캔" 없어야 통과
+            if "파우치" in name:
+                return True   # subcategory 없어도 goods_name에 "파우치" 있으면 통과
+            return False
+        candidates = [c for c in candidates if is_pouch_product(c)]
+        print(f"[SEARCH-DEBUG] 파우치 필터 후: {len(candidates)}개 | 상품명: {[c.get('goods_name','?')[:30] for c in candidates[:5]]}")
+    else:
+        print(f"[SEARCH-DEBUG] 제형 필터 미적용")
+
+    # [GP 보충] 5개 미만이면 모아보기(GP) 상품으로 보충
+    _MIN_CANDIDATES = 5
+    if len(candidates) < _MIN_CANDIDATES:
+        from final_ai.pipeline.utils import get_db_connection
+        existing_ids = {c["goods_id"] for c in candidates}
+        # 알레르기 여분 확보를 위해 더 넉넉하게 가져옴
+        needed = max((_MIN_CANDIDATES - len(candidates)) * 4, 12)
+
+        try:
+            _conn = get_db_connection()
+            _cur = _conn.cursor()
+
+            gp_filter_parts = [
+                "AND goods_id LIKE 'GP%%'",            # GP 상품만
+                "AND goods_name NOT ILIKE '%%샘플%%'",  # 샘플 제외
+            ]
+            gp_params = []
+
+            # [핵심] 제형 조건을 SQL 단계에서 직접 적용 (LIMIT 낭비 없이)
+            if "캔" in user_input_lower and "파우치" not in user_input_lower:
+                gp_filter_parts.append("AND goods_name ILIKE '%%캔%%'")
+            elif "파우치" in user_input_lower and "캔" not in user_input_lower:
+                gp_filter_parts.append("AND goods_name NOT ILIKE '%%캔%%'")
+
+            if pt_kr:
+                gp_filter_parts.append("AND %s = ANY(pet_type)")
+                gp_params.append(pt_kr)
+            if category:
+                gp_filter_parts.append("AND (%s = ANY(category) OR %s = ANY(subcategory))")
+                gp_params.extend([category, category])
+            if subcategory:
+                gp_filter_parts.append("AND %s = ANY(subcategory)")
+                gp_params.append(subcategory)
+
+            gp_sql = (
+                "SELECT goods_id, goods_name, pet_type, category, subcategory,"
+                "       price, thumbnail_url, product_url, brand_name, discount_price,"
+                "       popularity_score, sentiment_avg, repeat_rate, health_concern_tags,"
+                "       rating, review_count, main_ingredients"
+                " FROM product"
+                " WHERE 1=1 "
+                + " ".join(gp_filter_parts) +
+                " ORDER BY popularity_score DESC NULLS LAST, review_count DESC NULLS LAST"
+                " LIMIT %s"
+            )
+
+            _cur.execute(gp_sql, gp_params + [needed])
+            gp_cols = [d[0] for d in _cur.description]
+            gp_rows = [dict(zip(gp_cols, row)) for row in _cur.fetchall()
+                       if row[0] not in existing_ids]
+
+            _cur.close()
+            _conn.close()
+
+            print(f"[SEARCH-DEBUG] GP 쿼리 결과: {len(gp_rows)}개 (SQL 자체 제형 필터 적용됨)")
+            if gp_rows:
+                print(f"[SEARCH] GP 보충: {len(gp_rows)}개 추가 (현재 {len(candidates)}개 → 목표 {_MIN_CANDIDATES}개+)")
+                print(f"[SEARCH-DEBUG] GP 상품명: {[c.get('goods_name','?')[:30] for c in gp_rows[:5]]}")
+                candidates.extend(gp_rows)
+            else:
+                print(f"[SEARCH-DEBUG] GP 보충 없음 (해당 제형 GP 상품 자체 없음)")
+
+        except Exception as _e:
+            print(f"[SEARCH] GP 보충 실패: {_e}")
 
     # 알레르기 post-filter
     allergies = state.get("allergies") or []
@@ -377,6 +523,7 @@ def rerank_node(state: ChatState) -> dict:
     """재랭킹: RRF 점수 + 인기도·감성·재구매율 가중치"""
     candidates      = state.get("search_results") or []
     detected_aspect = state.get("detected_aspect")
+    intents         = state.get("intents") or []
     relaxation      = state.get("filter_relaxation_count", 0)
 
     if not candidates:
@@ -389,44 +536,54 @@ def rerank_node(state: ChatState) -> dict:
             "recommend_retry_pending": should_retry,
         }
 
-    rrf_scores  = [float(c.get("_score", 0.0)) for c in candidates]
-    pop_scores  = [c.get("popularity_score")    for c in candidates]
-    sent_scores = [c.get("sentiment_avg")       for c in candidates]
-    rep_scores  = [c.get("repeat_rate")         for c in candidates]
+    # "popularity" 의도 여부 확인
+    is_popularity_mode = "popularity" in intents
 
-    # float 변환 후 normalize (None은 0.0으로 처리)
-    norm_rrf = _normalize(rrf_scores)
-    norm_pop = _normalize([float(v) if v is not None else 0.0 for v in pop_scores])
+    rrf_scores  = [float(c.get("_score", 0.0)) for c in candidates]
+    pop_scores  = [float(c.get("popularity_score") or 0.0) for c in candidates]
+    sent_scores = [float(c.get("sentiment_avg") or 0.0)    for c in candidates]
+    rep_scores  = [float(c.get("repeat_rate") or 0.0)      for c in candidates]
+
+    # 각 지표 정규화
+    norm_rrf  = _normalize(rrf_scores)
+    norm_pop  = _normalize(pop_scores)
+    norm_sent = _normalize(sent_scores)
+    norm_rep  = _normalize(rep_scores)
 
     scored = []
     for i, c in enumerate(candidates):
-        # 원본 값이 None 인지 확인 (가중치 로직용)
-        has_pop       = pop_scores[i]  is not None
-        has_sentiment = sent_scores[i] is not None
-        has_repeat    = rep_scores[i]  is not None
-        
-        # [변수 초기화] 디버그 로그용
-        gamma_v = float(sent_scores[i]) if has_sentiment else 0.0
-        delta_v = float(rep_scores[i])  if has_repeat    else 0.0
-
-        if not has_pop and not has_sentiment and not has_repeat:
-            score = norm_rrf[i]
-        elif not has_sentiment and not has_repeat:
-            # 원본이 Decimal일 수 있으므로 math할 때 float() 보장
-            v_pop = float(pop_scores[i]) if has_pop else 0.0
-            score = _ALPHA * norm_rrf[i] + 0.35 * float(norm_pop[i])
-        else:
-            score   = (
-                _ALPHA * norm_rrf[i]
-                + _BETA  * float(norm_pop[i])
-                + _GAMMA * gamma_v
-                + _DELTA * delta_v
+        if is_popularity_mode:
+            # [인기 상품 모드] 판매량(50%) + 평점(25%) + 재구매율(25%)
+            # 검색 엔진 점수(RRF)는 필터링 용도로만 쓰고 점수 계산에서는 제외하거나 아주 작게 유지
+            score = (
+                0.50 * norm_pop[i] +
+                0.25 * norm_sent[i] +
+                0.25 * norm_rep[i] +
+                0.01 * norm_rrf[i]  # 최소한의 유사도 유지
             )
+        else:
+            # [일반 추천 모드] 기존 가중치 유지
+            has_pop       = c.get("popularity_score") is not None
+            has_sentiment = c.get("sentiment_avg")    is not None
+            has_repeat    = c.get("repeat_rate")      is not None
 
-        if detected_aspect and c.get("sentiment_avg") is not None:
+            if not has_pop and not has_sentiment and not has_repeat:
+                score = norm_rrf[i]
+            elif not has_sentiment and not has_repeat:
+                score = _ALPHA * norm_rrf[i] + 0.35 * norm_pop[i]
+            else:
+                score = (
+                    _ALPHA * norm_rrf[i]
+                    + _BETA  * norm_pop[i]
+                    + _GAMMA * norm_sent[i]
+                    + _DELTA * norm_rep[i]
+                )
+
+        # 관점 기반 추가 가점 (일반 모드 전용)
+        if not is_popularity_mode and detected_aspect and c.get("sentiment_avg") is not None:
             score += _EPSILON * float(c["sentiment_avg"])
 
-        # [추가] 건강관심사 및 품종 특성 매칭 시 가산점 부여
+        # 건강관심사 및 품종 특성 매칭 가산점
         user_concerns = state.get("health_concerns") or []
         health_traits = state.get("health_traits") or ""
         product_tags  = c.get("health_concern_tags") or []
@@ -439,26 +596,24 @@ def rerank_node(state: ChatState) -> dict:
         # 1. 사용자 직접 등록 건강관심사 매칭 (+0.2)
         if any(h in product_tags for h in user_concerns):
             score += 0.20
-            print(f"[RERANK] 사용자 건강관심사 매칭 가산점(+0.2): {c.get('goods_name')}")
             
         # 2. 품종별 취약 건강 정보(health_traits) 내 키워드 매칭 (+0.1)
         if health_traits:
-            # 주요 키워드 추출 (슬개골, 기관허탈, 눈물, 피부, 관절 등)
             trait_keywords = [k for k in ["슬개골", "기관허탈", "눈물", "피부", "관절", "체중", "소화", "신장", "심장"] if k in health_traits]
             if any(k in product_tags for k in trait_keywords):
                 score += 0.10
 
         scored.append((score, c))
 
+    # 점수 높은 순으로 정렬
     scored.sort(key=lambda x: x[0], reverse=True)
     top = [c for _, c in scored[:_TOP_K]]
 
     should_retry = len(top) < 3 and relaxation < 1
     new_relaxation = relaxation + 1 if should_retry else relaxation
-    if should_retry:
-        print(f"[RERANK] 결과 부족 ({len(top)}개) → 필터 완화 예정")
-    else:
-        print(f"[RERANK] 최종 {len(top)}개")
+    
+    mode_str = "POPULARITY" if is_popularity_mode else "NORMAL"
+    print(f"[RERANK] mode={mode_str}, final {len(top)}개 (relaxation={relaxation})")
 
     return {
         "reranked_results": top,
