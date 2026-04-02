@@ -27,6 +27,7 @@ INTENT_SYSTEM = f"""
 - breed: 품종명 / null
 - age: 나이 / null
 - mentioned_pet_names: 질문에 언급된 반려동물의 이름 리스트 / []
+- exclude_ingredients: 사용자가 명시적으로 제외를 요청한 성분(예: "소고기 없는", "닭고기 안 들어간" 등) 리스트 / []
 - is_next_request: 사용자가 "다음 것도 보여줘", "응 보여줘", "다른 카테고리는?" 등 대기 중인 다른 펫이나 다음 카테고리의 추천을 요청하는 긍정 답변인 경우 true / false
 
 ### domain_intent (domain_qa 포함 시)
@@ -41,7 +42,9 @@ health_disease / care_management / nutrition_diet / behavior_psychology / travel
    -> {{"intents":["recommend"],"mentioned_pet_names":["바나나"],"target_categories":["사료"]}}
 4. 고양이 캔 사료 명확: "고양이 주식캔 추천해줘"
    -> {{"intents":["recommend"],"pet_type":"고양이","target_categories":["사료"],"subcategory":"주식캔"}}
-5. 후속(긍정): "응 다음 것도 보여줘"
+5. 제외 요청: "소고기 안 들어간 사료 추천해줘"
+   -> {{"intents":["recommend"],"target_categories":["사료"],"exclude_ingredients":["소고기"]}}
+6. 후속(긍정): "응 다음 것도 보여줘"
    -> {{"intents":["recommend"],"is_next_request":true}}
 
 ### 카테고리
@@ -89,6 +92,7 @@ def intent_node(state: ChatState) -> dict:
     
     new_intents = r.get("intents") or []
     mentioned_names = r.get("mentioned_pet_names") or []
+    exclude_ingredients = r.get("exclude_ingredients") or []
     is_next_request = r.get("is_next_request", False)
     target_categories = r.get("target_categories") or []
     is_explicit_pet_info = bool(r.get("pet_type") or r.get("breed"))
@@ -269,6 +273,9 @@ def intent_node(state: ChatState) -> dict:
 
     print(f"[INTENT] input='{user_input}' -> intents={new_intents}, pet={new_pet.get('name', new_pet.get('breed', 'Unknown'))}, filters={new_filters}")
 
+    # 알레르기/제외 성분 병합 (DB 정보 + 실시간 입력 정보)
+    combined_allergies = list(set((overridden_metadata.get("allergies") or state.get("allergies") or []) + exclude_ingredients))
+
     return {
         "intents":         new_intents,
         "target_pet_id":   target_pet_id,
@@ -285,5 +292,6 @@ def intent_node(state: ChatState) -> dict:
         "pet_mismatch":    False if is_pet_switched else state.get("pet_mismatch", False),
         "form_hint":       form_hint,
         "filter_relaxation_count": 0 if target_categories else state.get("filter_relaxation_count", 0),
+        "allergies":       combined_allergies,
         **overridden_metadata
     }

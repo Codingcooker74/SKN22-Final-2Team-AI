@@ -1,4 +1,5 @@
 import re
+import unicodedata
 import psycopg2.extras
 from final_ai.observability import traceable
 from final_ai.pipeline.state import ChatState
@@ -41,13 +42,36 @@ def profile_node(state: ChatState) -> dict:
     target_age = 0
     is_pet_override = state.get("is_pet_override", False)
     
-    # 나이(숫자) 추출 시도 (예: "7살" -> 7)
+    # 나이 정밀 추출 함수 (예: "0년 7개월" -> 0.58, "7개월" -> 0.58, "2살" -> 2.0)
+    def parse_pet_age(age_str):
+        if not age_str: return 1.0 # 기본값
+        age_str = str(age_str).replace(" ", "")
+        
+        # 1) "X년 Y개월" 또는 "X살 Y개월" 패턴
+        match_full = re.search(r'(\d+)(?:년|살)(\d+)개월', age_str)
+        if match_full:
+            years = int(match_full.group(1))
+            months = int(match_full.group(2))
+            return years + (months / 12.0)
+            
+        # 2) "Y개월" 단독 패턴
+        match_months = re.search(r'(\d+)개월', age_str)
+        if match_months:
+            return int(match_months.group(1)) / 12.0
+            
+        # 3) 일반 숫자 (살, 세) 패턴
+        nums = re.findall(r'(\d+\.?\d*)', age_str)
+        if nums:
+            return float(nums[0])
+            
+        return 1.0
+
     try:
         age_val = pet_profile.get("age") or ""
-        if isinstance(age_val, int): target_age = age_val
+        if isinstance(age_val, (int, float)): 
+            target_age = float(age_val)
         else:
-            nums = re.findall(r'\d+', str(age_val))
-            if nums: target_age = int(nums[0])
+            target_age = parse_pet_age(age_val)
     except: pass
 
     pet_mismatch = False
@@ -133,17 +157,23 @@ def profile_node(state: ChatState) -> dict:
             if conn is not None:
                 conn.close()
 
-    # 2. 품종 메타 정보 가져오기 (DB에 펫 정보가 없어도 target_breed가 있으면 수행)
+    # 2. 프로필 기반 건강 정보 및 연령대 매칭
+    breed_context = ""
+    health_traits = ""
+    
+    # 연령대 매칭 로직 (고양이/키튼, 강아지/퍼피: 1세 미만, 시니어: 7세 이상, 나머지 어덜트)
+    age_group = "어덜트"
+    if target_age < 1:
+        age_group = "키튼" if target_species == "고양이" else "퍼피"
+    elif target_age >= 7:
+        age_group = "시니어"
+
     if target_breed:
         conn = None
         cur = None
         try:
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            # 연령대 매칭 로직 (퍼피: 1세 미만, 시니어: 7세 이상, 나머지 어덜트)
-            age_group = "어덜트"
-            if target_age < 1:  age_group = "퍼피"
-            elif target_age >= 7: age_group = "시니어"
 
             # 품종명 + 연령대 우선 매칭
             cur.execute("""
@@ -188,7 +218,8 @@ def profile_node(state: ChatState) -> dict:
         "breed_context":    breed_context,
         "health_traits":    health_traits,
         "budget":           budget_val,
-        "pet_mismatch":     pet_mismatch
+        "pet_mismatch":     pet_mismatch,
+        "age_group":        age_group
     }
 
 
@@ -221,8 +252,11 @@ def query_node(state: ChatState) -> dict:
 
     prompt = (
         f"반려동물 상품 검색을 위한 최적화된 한국어 검색어를 한 문장으로만 반환하세요.\n"
+        f"중요: 검색어에는 '어덜트', '퍼피', '키튼', '시니어'와 같은 연령대 단어를 직접 포함하지 마세요.\n"
         f"펫 정보: {pet_ctx}\n"
+        f"연령대: {state.get('age_group') or '없음'}\n"
         f"품종 특성 지식:\n{state.get('breed_context') or '없음'}\n"
+        f"제외 성분: {', '.join(state.get('allergies') or []) or '없음'}\n"
         f"카테고리: {category_hint} / 세부: {subcategory_hint}\n"
         f"{concern_clause}\n"
         f"원래 질문: {state['user_input']}"
@@ -238,6 +272,10 @@ def query_node(state: ChatState) -> dict:
         fallback_parts = [category_hint, subcategory_hint, state["user_input"]]
         search_query = " ".join(part for part in fallback_parts if part).strip() or state["user_input"]
         print(f"[QUERY] LLM 실패로 원문 기반 검색어 사용: {e}")
+
+    query_age_group = state.get("age_group")
+    if query_age_group == "키튼" and "키튼" not in search_query:
+        search_query = f"{search_query} 키튼"
 
     print(f"[QUERY] query={search_query!r}, relaxation={relaxation}")
     return {
@@ -420,65 +458,105 @@ def search_node(state: ChatState) -> dict:
         except Exception as _e:
             print(f"[SEARCH] GP 보충 실패: {_e}")
 
-    # 알레르기 post-filter
-    allergies = state.get("allergies") or []
-    if allergies:
-        from kiwipiepy import Kiwi
-        kiwi = Kiwi()
-        
-        # 1. 알레르기 키워드에서 핵심 명사 추출
-        stop_nouns = {"고기", "가루", "분말", "생물", "제품", "성분", "첨가물", "함유", "용", "포함"}
-        # 1글자 동물 키워드가 포함되어도 무시해야 할 단어들 (오탐 방지)
-        safe_words = {"말티즈", "소프트", "소화", "소형", "소형견", "소프", "말티", "소중형", "말랑"}
-        
-        def get_roots(text_list):
-            roots = set()
-            for text in text_list:
-                text_lower = str(text).lower()
-                # A. 형태소 분석 기반 추출
-                for token in kiwi.tokenize(text_lower):
-                    if token.tag.startswith("NN"):
-                        if token.form not in stop_nouns and len(token.form) >= 1:
-                            roots.add(token.form)
-                # B. 핵심 동물성 키워드 강제 추출 (복합어/미분절 대응)
-                # 오탐 방지를 위해 safe_words가 포함된 경우 해당 단어를 제외하고 검사하거나 전처리
-                cleaned_text = text_lower
-                for sw in safe_words:
-                    cleaned_text = cleaned_text.replace(sw, " ")
-                
-                for animal in CORE_ANIMAL_PLANTS:
-                    if animal in cleaned_text:
-                        roots.add(animal)
-                # C. 원문 자체 추가
-                roots.add(text_lower)
-            return roots
+    # --- 연령대별 상호 배타적 필터링 규칙 정의 ---
+    target_age_group = state.get("age_group", "어덜트")
+    EXCLUDE_BY_AGE = {
+        "키튼": ["어덜트", "시니어", "노령"],
+        "퍼피": ["어덜트", "시니어", "노령"],
+        "어덜트": ["키튼", "퍼피"],
+        "시니어": ["키튼", "퍼피"]
+    }
+    forbidden_age_keywords = EXCLUDE_BY_AGE.get(target_age_group, [])
+    
+    # [추가] 성장기(키튼/퍼피) 사료 필수 조건 키워드
+    MANDATORY_BY_AGE = {
+        "키튼": ["키튼", "전연령"],
+        "퍼피": ["퍼피", "전연령"]
+    }
+    mandatory_keywords = MANDATORY_BY_AGE.get(target_age_group, [])
+    
+    print(f"[SEARCH] Target Age Group: {target_age_group}, Forbidden: {forbidden_age_keywords}, Mandatory (if feed): {mandatory_keywords}")
 
+    # 1. 알레르기 어근 추출 루틴
+    allergy_roots = set()
+    allergies = state.get("allergies") or []
+    from kiwipiepy import Kiwi
+    kiwi = Kiwi()
+    # 1글자 동물성 명사 (필수 차단 대상)
+    CORE_ANIMAL_PLANTS = {"닭", "소", "양", "말", "굴", "게", "꿀", "오리", "연어", "참치", "돼지"}
+    stop_nouns = {"고기", "가루", "분말", "생물", "제품", "성분", "첨가물", "함유", "용", "포함"}
+    safe_words = {"말티즈", "소프트", "소화", "소형", "소형견", "소프", "말티", "소중형", "말랑"}
+
+    def get_roots(text_list):
+        roots = set()
+        for text in text_list:
+            text_lower = str(text).lower()
+            for token in kiwi.tokenize(text_lower):
+                if token.tag.startswith("NN") and token.form not in stop_nouns:
+                    roots.add(token.form)
+            # 동물성 키워드 강제 추출 (복합어 대비)
+            cleaned_text = text_lower
+            for sw in safe_words: cleaned_text = cleaned_text.replace(sw, " ")
+            for animal in CORE_ANIMAL_PLANTS:
+                if animal in cleaned_text: roots.add(animal)
+            roots.add(text_lower)
+        return roots
+
+    if allergies:
         allergy_roots = get_roots(allergies)
         print(f"[SEARCH] Allergy Roots: {allergy_roots}")
 
-        def is_safe(c):
-            ocr_text = str(c.get("ingredient_text_ocr") or "").lower()
-            goods_name = str(c.get("goods_name") or "").lower()
+    # 2. 통합 세이프 필터 함수 (NFC 정규화 적용)
+    def is_safe(c, current_allergy_roots):
+        import unicodedata
+        def normalize_text(t):
+            if not t: return ""
+            # 유니코드 NFC 정규화 및 공백 제거
+            return unicodedata.normalize('NFC', str(t)).lower().replace(" ", "")
 
-            for r in allergy_roots:
-                if len(r) > 1:
-                    if r in ocr_text or r in goods_name: return False
-                else:
-                    if r in CORE_ANIMAL_PLANTS:
-                        # [오탐 방지] 1글자 코어 동물(말, 소 등)이 말티즈, 소프트 등의 일부인 경우 제외
-                        c_ocr = ocr_text
-                        c_name = goods_name
-                        for sw in safe_words:
-                            c_ocr = c_ocr.replace(sw, " ")
-                            c_name = c_name.replace(sw, " ")
-                        
-                        if r in c_ocr or r in c_name: return False
-                    else:
-                        # 일반 1글자 어근은 오탐 방지를 위해 공백 포함 체크
-                        if f" {r} " in f" {ocr_text} " or f" {r} " in f" {goods_name} ":
-                            return False
+        gn_norm = normalize_text(c.get("goods_name"))
+        ocr_norm = normalize_text(c.get("ingredient_text_ocr"))
 
-            # B. 메인 성분 리스트 검사 (형태소 단위 체크)
+        # A. 연령대 하드 필터 (subcategory + goods_name)
+        sub_raw = c.get("subcategory") or []
+        cat_raw = c.get("category") or []
+        
+        # 배열 형태든 문자열 형태든 리스트로 변환
+        def _to_list(raw):
+            if isinstance(raw, str):
+                return [normalize_text(s) for s in raw.replace("{", "").replace("}", "").split(",")]
+            return [normalize_text(str(s)) for s in raw]
+
+        sub_list = _to_list(sub_raw)
+        cat_list = _to_list(cat_raw)
+
+        # [필수 조건 체크] 
+        # 1. category 컬럼에서 '사료' 여부 판별 (category.json 기준 대분류)
+        FEED_CATEGORIES = ["사료", "습식관"]
+        is_feed = any(fc in s for fc in FEED_CATEGORIES for s in cat_list)
+
+        # 2. 사료인 경우, subcategory(소분류) 또는 상품명에서 연령대 키워드 확인
+        if is_feed and mandatory_keywords:
+            has_mandatory = any(normalize_text(m) in s for m in mandatory_keywords for s in sub_list) or \
+                            any(normalize_text(m) in gn_norm for m in mandatory_keywords)
+            if not has_mandatory:
+                # print(f"[FILTER] 필수 연령대 누락 차단: '{c['goods_name']}' (대분류={cat_list}, 필수키워드={mandatory_keywords})")
+                return False
+
+        for kw in forbidden_age_keywords:
+            kw_norm = normalize_text(kw)
+            if any(kw_norm in s for s in sub_list) or (kw_norm in gn_norm):
+                print(f"[FILTER] 연령대 불일치 차단: '{c['goods_name']}' (금지어 '{kw_norm}' 매칭)")
+                return False
+
+        # B. 알레르기 정밀 필터
+        if current_allergy_roots:
+            for r in current_allergy_roots:
+                r_norm = normalize_text(r)
+                if (r_norm in gn_norm) or (r_norm in ocr_norm):
+                    return False
+            
+            # 메인 성분(main_ingredients) 리스트 추가 검사
             m_ingredients = c.get("main_ingredients") or []
             if isinstance(m_ingredients, str):
                 import json
@@ -486,26 +564,13 @@ def search_node(state: ChatState) -> dict:
                 except: m_ingredients = [m_ingredients]
             
             for ing in m_ingredients:
-                ing_lower = str(ing).lower()
-                # 1. 단순 전체 포함 여부 (이미 구현됨)
-                if any(a.lower() in ing_lower for a in allergies):
+                ing_norm = normalize_text(ing)
+                if any(normalize_text(r) in ing_norm for r in current_allergy_roots):
                     return False
-                
-                # 2. 형태소 어근 교집합 및 상호 포함 체크
-                ing_roots = get_roots([ing_lower])
-                
-                for r_all in allergy_roots:
-                    for r_ing in ing_roots:
-                        # 완벽 일치
-                        if r_all == r_ing: return False
-                        # 상호 포함 관계 (예: 닭고기-닭, 닭가슴살-닭)
-                        if (r_all in r_ing) or (r_ing in r_all):
-                            # 오탐 방지: 둘 중 하나가 코어 동물이거나, 겹치는 어근이 충분히 길 때
-                            if (r_all in CORE_ANIMAL_PLANTS) or (r_ing in CORE_ANIMAL_PLANTS) or (len(set(r_all) & set(r_ing)) >= 2):
-                                return False
-            return True
-            
-        candidates = [c for c in candidates if is_safe(c)]
+        return True
+
+    # 3. 모든 후보군에 대해 필터 상시 적용
+    candidates = [c for c in candidates if is_safe(c, allergy_roots)]
 
     print(f"[SEARCH] {len(candidates)}개 후보 (relaxation={relaxation})")
     return {"search_results": candidates}
