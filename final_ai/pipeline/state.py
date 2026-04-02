@@ -12,7 +12,9 @@ class ChatState(TypedDict):
     user_id:          str | None
     target_pet_id:    str | None
     pending_pet_ids:  list[str]      # 추천 대기 중인 펫 ID 목록
+    pending_categories: list[str]    # 추천 대기 중인 카테고리 목록
     is_pet_switched:  bool            # 현재 턴에서 펫 전환 발생 여부
+
     switched_pet_name: str | None    # 전환된 펫의 이름 (응답 출력용)
     pet_profile:      dict | None    # species(dog/cat), breed, age, weight, gender
     health_concerns:  list[str]      # PET_HEALTH_CONCERN

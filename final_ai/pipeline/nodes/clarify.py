@@ -42,16 +42,14 @@ def clarify_node(state: ChatState) -> dict:
     elif "recommend" in intents and state.get("form_hint"):
         # 캔/파우치 등 제형이 감지됐지만 사료인지 간식인지 불명확한 경우
         form = state["form_hint"]
-        pet_name = current_pet_type or "반려동물"
-        q = f"{form}을 찾으시는군요! {pet_name}용 주식(사료)으로 드릴까요, 간식으로 드릴까요?"
+        pet_text = f"{current_pet_type}용" if current_pet_type else "반려동물용"
+        q = f"{form} 상품을 찾으시는군요! {pet_text} 주식(사료)을 찾으시나요, 아니면 간식을 찾으시나요?"
     elif "recommend" in intents and not category:
-        # 해당 펫 타입의 대분류 목록 가져오기
-        avail_cats = list(_categories.get(current_pet_type, {}).keys()) if current_pet_type else []
-        if not avail_cats: # fallback
-            avail_cats = ["사료", "간식", "용품"]
-        
+        # 사료·간식만 후보로 제한 (용품·모래 등은 고양이 캔 맥락에서 불필요)
         pop_str = " 인기 상품" if "popularity" in intents else ""
-        q = f"{current_pet_type}를 위한 어떤{pop_str}을 찾으시나요? ({', '.join(avail_cats)})"
+        pet_text = f"{current_pet_type}를 위한" if current_pet_type else "반려동물을 위한"
+        q = f"{pet_text} 어떤{pop_str}을 찾으시나요? (사료, 간식)"
+
     else:
         q = "반려동물 상품 추천이나 건강 정보 상담을 도와드릴 수 있어요. 궁금한 점이 있으시면 말씀해 주세요!"
 
