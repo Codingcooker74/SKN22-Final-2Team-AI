@@ -58,6 +58,9 @@ def profile_node(state: ChatState) -> dict:
         try:
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # [FIX] 사용자가 명시적으로 품종/종을 언급한 경우(is_pet_override), 
+            # target_pet_id가 없다면 DB에서 최근 펫을 가져오지 않고 해당 입력 정보만 사용함.
             if target_pet_id:
                 cur.execute("""
                     SELECT pet_id, name, species, breed, age_years, age_months, weight_kg, gender, budget_range
@@ -65,12 +68,17 @@ def profile_node(state: ChatState) -> dict:
                     WHERE user_id = %s AND pet_id = %s
                     LIMIT 1
                 """, (user_id, target_pet_id))
+                pet_row = cur.fetchone()
+            elif is_pet_override:
+                # 명시적 override 상황에서는 DB 자동 조회를 건너뜀
+                pet_row = None
+                print(f"[PROFILE] Explicit pet override detected. Skipping DB auto-load.")
             else:
                 cur.execute("""
                     SELECT pet_id, name, species, breed, age_years, age_months, weight_kg, gender, budget_range
                     FROM pet WHERE user_id = %s ORDER BY created_at DESC LIMIT 1
                 """, (user_id,))
-            pet_row = cur.fetchone()
+                pet_row = cur.fetchone()
 
             if pet_row:
                 # [불일치 검증 로직 추가]

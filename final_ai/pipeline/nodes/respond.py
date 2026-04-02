@@ -55,8 +55,9 @@ RESPOND_SYSTEM = """\
 3. **펫 프로필 전환 안내**:
    - 만약 '펫 전환 발생' 정보가 있다면, 답변 서두에 "애칭 {전환된_펫이름}의 정보를 바탕으로 다시 추천해 드릴게요!" 라는 문구를 반드시 포함하세요.
 
-4. **대기 중인 펫(Next Pet) 안내**:
-   - 만약 '대기 중인 펫 목록'이 있다면, 답변 마지막에 "혹시 {다음_펫이름}의 추천 상품도 바로 보여드릴까요?" 라는 질문을 던져 대화를 이어가세요.
+4. **대기 중인 추천(Next Queue) 안내**:
+   - **대기 중인 카테고리**가 있다면, 답변 마지막에 "혹시 {다음_카테고리} 추천 상품도 바로 보여드릴까요?" 라는 질문을 던지세요.
+   - 대기 중인 카테고리가 없고 **대기 중인 펫**이 있다면, 답변 마지막에 "혹시 {다음_펫이름}의 추천 상품도 바로 보여드릴까요?" 라는 질문을 던지세요.
 
 5. 일반 지점:
    - 답변의 각 주요 단락 사이에는 **반드시 한 줄의 빈 줄**을 넣어 가독성을 높이세요.
@@ -104,12 +105,14 @@ def respond_node(state: ChatState) -> dict:
 
     translated_concerns = translate_health_concerns(health_concerns)
     
-    # 대기 중인 펫 이름 조회
+    # 대기 중인 펫 이름 및 카테고리 조회
     pending_ids = state.get("pending_pet_ids") or []
     pending_names = []
     if pending_ids and state.get("user_id"):
         all_pets = get_user_pets(state["user_id"])
         pending_names = [p["name"] for p in all_pets if p["pet_id"] in pending_ids]
+    
+    pending_cats = state.get("pending_categories") or []
 
     user_msg = (
         f"현재 상황 정보:\n"
@@ -117,6 +120,8 @@ def respond_node(state: ChatState) -> dict:
         f"- 펫 전환 발생: {'YES' if state.get('is_pet_switched') else 'NO'}\n"
         f"- 전환된 펫 이름: {state.get('switched_pet_name') or 'N/A'}\n"
         f"- 대기 중인 펫 목록: {', '.join(pending_names) if pending_names else '없음'}\n"
+        f"- 대기 중인 카테고리: {', '.join(pending_cats) if pending_cats else '없음'}\n"
+        f"- 다음_카테고리: {pending_cats[0] if pending_cats else 'N/A'}\n"
         f"- 카테고리: {category}\n"
         f"- 등록된 건강 관심사: {', '.join(translated_concerns) if translated_concerns else '없음'}\n"
         f"- 건강 특징: {health_traits}\n"
@@ -124,6 +129,7 @@ def respond_node(state: ChatState) -> dict:
         f"사용자 질문: {user_input}\n\n"
         f"참고 데이터:\n{context_block}"
     )
+
 
     try:
         ensure_request_active()
