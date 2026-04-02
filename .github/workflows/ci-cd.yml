@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build FastAPI image
-        run: docker build --build-arg PREWARM_FASTEMBED=0 -t tailtalk-fastapi:ci .
+        run: docker build -t tailtalk-fastapi:ci .
 
       - name: Compile Python sources
         run: docker run --rm tailtalk-fastapi:ci python -m compileall main.py final_ai
