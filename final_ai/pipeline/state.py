@@ -31,6 +31,7 @@ class ChatState(TypedDict):
     pet_mismatch:        bool        # 등록된 펫 정보와 채팅 정보 불일치 여부
 
     # recommend 플로우
+    age_group:               str | None         # 키튼 / 퍼피 / 어덜트 / 시니어
     search_query:            str | None
     filters:                 dict | None
     breed_context:           str | None         # 품종별 지식 전체
