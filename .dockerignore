@@ -9,6 +9,11 @@
 .idea/
 .vscode/
 .DS_Store
+.github/
+deploy/
+docs/
+before/
+.test-deploy/
 
 # Python
 .venv/
@@ -35,3 +40,7 @@ dist/
 
 # 테스트
 tests/
+final_ai/tests/
+test/**
+!test/data/
+!test/data/merged_QnA_final.csv
