@@ -139,8 +139,6 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          cache-from: type=gha,scope=fastapi-eb
-          cache-to: type=gha,mode=max,scope=fastapi-eb
           tags: |
             ${{ env.FASTAPI_IMAGE_REPO }}:latest
             ${{ env.FASTAPI_IMAGE_REPO }}:${{ steps.fastapi-meta.outputs.short_sha }}
