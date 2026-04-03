@@ -164,7 +164,8 @@ def profile_node(state: ChatState) -> dict:
     # 연령대 매칭 로직 (고양이/키튼, 강아지/퍼피: 1세 미만, 시니어: 7세 이상, 나머지 어덜트)
     age_group = "어덜트"
     if target_age < 1:
-        age_group = "키튼" if target_species == "고양이" else "퍼피"
+        # DB의 'cat' 혹은 한글 '고양이' 모두를 '키튼'으로 판별하도록 수정
+        age_group = "키튼" if target_species in ["cat", "고양이"] else "퍼피"
     elif target_age >= 7:
         age_group = "시니어"
 
@@ -238,21 +239,25 @@ def query_node(state: ChatState) -> dict:
     category_hint = filters.get("category") or ""
     raw_sub = filters.get("subcategory") or ""
     # 재검색(relaxation>0) 중에도 STRICT_SUBCATEGORIES(캔/파우치 등 제형)는 절대 해제하지 않음
-    subcategory_hint = raw_sub if (relaxation == 0 or raw_sub in STRICT_SUBCATEGORIES) else ""
+    is_strict = any(s in STRICT_SUBCATEGORIES for s in (raw_sub if isinstance(raw_sub, list) else [raw_sub]))
+    subcategory_hint = raw_sub if (relaxation == 0 or is_strict) else ""
 
     prominent_concerns = ", ".join(state.get("health_concerns") or [])
-    concern_clause = (
-        f"특히 다음 건강 고민사항을 반드시 해결할 수 있는 상품 위주로 검색어를 구성하세요: {prominent_concerns}\n"
-        f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
-        f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 \"캔\"을 언급하면 반드시 \"캔\"이 포함된 소분류를, \"파우치\"를 언급하면 \"파우치\"가 포함된 소분류를 선택하세요.**"
-    ) if prominent_concerns else (
-        f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
-        f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 \"캔\"을 언급하면 반드시 \"캔\"이 포함된 소분류를, \"파우치\"를 언급하면 \"파우치\"가 포함된 소분류를 선택하세요.**"
-    )
+    if prominent_concerns:
+        concern_clause = (
+            f"- **특히 다음 건강 고민사항을 반드시 해결할 수 있는 상품 위주로 검색어를 구성하세요: {prominent_concerns}**\n"
+            f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
+            f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 '캔'을 언급하면 반드시 '캔'이 포함된 소분류를, '파우치'를 언급하면 '파우치'가 포함된 소분류를 선택하세요.**"
+        )
+    else:
+        concern_clause = (
+            f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
+            f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 '캔'을 언급하면 반드시 '캔'이 포함된 소분류를, '파우치'를 언급하면 '파우치'가 포함된 소분류를 선택하세요.**"
+        )
 
     prompt = (
         f"반려동물 상품 검색을 위한 최적화된 한국어 검색어를 한 문장으로만 반환하세요.\n"
-        f"중요: 검색어에는 '어덜트', '퍼피', '키튼', '시니어'와 같은 연령대 단어를 직접 포함하지 마세요.\n"
+        f"중요: 검색어에는 '어덜트', '시니어' 단어를 직접 포함하지 마세요.\n"
         f"펫 정보: {pet_ctx}\n"
         f"연령대: {state.get('age_group') or '없음'}\n"
         f"품종 특성 지식:\n{state.get('breed_context') or '없음'}\n"
@@ -276,6 +281,8 @@ def query_node(state: ChatState) -> dict:
     query_age_group = state.get("age_group")
     if query_age_group == "키튼" and "키튼" not in search_query:
         search_query = f"{search_query} 키튼"
+    elif query_age_group == "퍼피" and "퍼피" not in search_query:
+        search_query = f"{search_query} 퍼피"
 
     print(f"[QUERY] query={search_query!r}, relaxation={relaxation}")
     return {
@@ -314,7 +321,8 @@ def search_node(state: ChatState) -> dict:
     # 1. 초기 검색(relaxation=0) 시에는 소분류를 항상 적용.
     # 2. 완화 검색(relaxation>0) 시에는 일반 소분류는 해제하지만, STRICT_SUBCATEGORIES에 해당하면 유지.
     subcategory = filters.get("subcategory")
-    if relaxation > 0 and subcategory not in STRICT_SUBCATEGORIES:
+    is_strict = any(s in STRICT_SUBCATEGORIES for s in (subcategory if isinstance(subcategory, list) else [subcategory]))
+    if relaxation > 0 and not is_strict:
         subcategory = None
     budget      = state.get("budget")
 
