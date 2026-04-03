@@ -1,7 +1,6 @@
 import json
-from final_ai.pipeline.nodes.intent import intent_node
-from final_ai.pipeline.nodes.respond import respond_node
-from final_ai.pipeline.state import ChatState
+from final_ai.graph.nodes import intent_node, respond_node
+from final_ai.graph.state import ChatState
 
 def test_multi_pet_flow():
     # ── 1. 초기 상태 설정 (바나나, 초코를 가진 유저 2번) ───────────────────────

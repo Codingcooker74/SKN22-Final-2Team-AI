@@ -6,7 +6,8 @@ from decimal import Decimal
 # 프로젝트 루트 및 서비스 디렉토리를 sys.path에 추가
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from final_ai.pipeline.nodes.recommend import profile_node, query_node, search_node, rerank_node, _normalize
+from final_ai.domain.recommendation.rerank_service import _normalize
+from final_ai.graph.nodes import profile_node, query_node, rerank_node, search_node
 
 def run_rerank_test(user_input, pet_profile=None, user_id=None, health_concerns=None):
     print(f"\n{'='*20} 리랭킹 점수 분석 테스트 {'='*20}")

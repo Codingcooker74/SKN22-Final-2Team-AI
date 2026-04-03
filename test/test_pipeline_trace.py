@@ -6,7 +6,7 @@ from typing import Dict, Any
 # 현 위치(services/fastapi/test)에서 상위 경로 추가하여 module 로드 가능하게 함
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from final_ai.pipeline.chatbot_graph import build_graph
+from final_ai.graph.builder import build_graph
 from langgraph.checkpoint.memory import MemorySaver
 
 def main():
@@ -71,7 +71,7 @@ def main():
                         if not state_update.get('health_traits'):
                             print("     (!) 건강 특징을 찾지 못했습니다. 품종명이 DB(breed_meta)와 일치하는지 확인하십시오.")
                     elif node_name == "query":
-                        print(f"   - 생성된 검색어: {state_update.get('query')}")
+                        print(f"   - 생성된 검색어: {state_update.get('search_query')}")
                     elif node_name == "search":
                         res = state_update.get('search_results', [])
                         print(f"   - 검색 결과: {len(res)}개 발견")
