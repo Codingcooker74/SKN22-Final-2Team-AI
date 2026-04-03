@@ -61,7 +61,7 @@ class ChatExecutionRequestTests(unittest.TestCase):
 
 
 class StreamChatEventsTests(unittest.TestCase):
-    def test_stream_chat_events_emits_info_tokens_products_and_done(self):
+    def test_stream_chat_events_emits_info_tokens_products_final_and_done(self):
         request = ChatRequest(
             message="사료 추천",
             thread_id="thread-1",
@@ -84,7 +84,18 @@ class StreamChatEventsTests(unittest.TestCase):
 
         self.assertEqual(events[0], ("info", {"content": "초코에 어울리는 사료를 찾는 중입니다..."}))
         self.assertEqual("".join(payload["content"] for event_type, payload in events if event_type == "token"), "좋은 사료입니다")
-        self.assertEqual(events[-2], ("products", {"cards": [{"goods_id": "A1"}]}))
+        self.assertEqual(events[-3], ("products", {"cards": [{"goods_id": "A1"}]}))
+        self.assertEqual(
+            events[-2],
+            (
+                "final",
+                {
+                    "message": "좋은 사료입니다",
+                    "cards": [{"goods_id": "A1"}],
+                    "meta": {"request_id": "req-1", "session_id": "thread-1"},
+                },
+            ),
+        )
         self.assertEqual(events[-1], ("done", {}))
 
     def test_stream_chat_events_yields_error_event_when_graph_fails(self):

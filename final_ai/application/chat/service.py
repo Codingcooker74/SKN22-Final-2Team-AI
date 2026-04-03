@@ -95,12 +95,23 @@ async def stream_chat_events(req: ChatRequest, request: Request) -> AsyncIterato
         yield "error", {"message": "응답 생성 중 오류가 발생했습니다."}
         return
 
-    async for event in _stream_response_tokens(final_state.get("response", ""), request, cancel_event):
+    response_text = final_state.get("response", "")
+    product_cards = final_state.get("product_cards", []) or []
+
+    async for event in _stream_response_tokens(response_text, request, cancel_event):
         yield event
 
     logger.info(
         "chat stream completed",
-        extra={**log_extra, "product_count": len(final_state.get("product_cards", []) or [])},
+        extra={**log_extra, "product_count": len(product_cards)},
     )
-    yield "products", {"cards": final_state.get("product_cards", [])}
+    yield "products", {"cards": product_cards}
+    yield "final", {
+        "message": response_text,
+        "cards": product_cards,
+        "meta": {
+            "request_id": log_extra.get("request_id", ""),
+            "session_id": log_extra.get("session_id", ""),
+        },
+    }
     yield "done", {}

@@ -2,7 +2,7 @@ from decimal import Decimal
 from typing import Any
 from typing_extensions import Literal
 
-ChatEventType = Literal["info", "token", "products", "done", "error"]
+ChatEventType = Literal["info", "token", "products", "final", "done", "error"]
 
 
 def json_default(value: Any):

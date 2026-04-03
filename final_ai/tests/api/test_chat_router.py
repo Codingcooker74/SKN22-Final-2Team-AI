@@ -26,6 +26,7 @@ class ChatRouterTests(unittest.TestCase):
             captured["user_id"] = req.user_id
             captured["thread_id"] = req.thread_id
             yield "info", {"content": "start"}
+            yield "final", {"message": "done", "cards": [], "meta": {"request_id": "req-123", "session_id": "session-99"}}
             yield "done", {}
 
         with patch.object(chat_router, "stream_chat_events", fake_stream_chat_events):
@@ -50,6 +51,7 @@ class ChatRouterTests(unittest.TestCase):
         self.assertEqual(response.headers["x-request-id"], "req-123")
         self.assertEqual(response.headers["content-type"], "text/event-stream; charset=utf-8")
         self.assertIn('"type": "info"', payload)
+        self.assertIn('"type": "final"', payload)
         self.assertIn('"type": "done"', payload)
         self.assertEqual(
             captured,
