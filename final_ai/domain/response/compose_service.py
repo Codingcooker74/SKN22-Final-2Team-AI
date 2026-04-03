@@ -18,7 +18,8 @@ logger = get_logger(__name__)
 def _build_context_block(domain_contexts: list[str], reranked_results: list[dict]) -> str:
     context_parts = []
     if domain_contexts:
-        context_parts.append(f"[도메인 지식]\n{'\n\n'.join(domain_contexts[:2])}")
+        domain_context_block = "\n\n".join(domain_contexts[:2])
+        context_parts.append(f"[도메인 지식]\n{domain_context_block}")
     if reranked_results:
         products_info = "\n".join(
             f"- {product.get('brand_name')} {product.get('goods_name')}"
