@@ -10,11 +10,15 @@ sys.path.append(str(FASTAPI_DIR))
 import os
 os.environ["POSTGRES_HOST"] = "localhost"
 
-from final_ai.pipeline.nodes.recommend import (
-    search_node, rerank_node, 
-    _ALPHA, _BETA, _GAMMA, _DELTA, _EPSILON, _normalize
+from final_ai.domain.recommendation.rerank_service import (
+    ALPHA as _ALPHA,
+    BETA as _BETA,
+    DELTA as _DELTA,
+    EPSILON as _EPSILON,
+    GAMMA as _GAMMA,
+    _normalize,
 )
-from final_ai.pipeline.utils import normalize_pet_species
+from final_ai.graph.nodes import search_node
 import ast
 
 def print_scoring_details(state):

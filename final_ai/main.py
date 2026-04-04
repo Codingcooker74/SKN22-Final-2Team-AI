@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from final_ai.routers import chat, products, recommend
+from final_ai.api.routers import chat, products, recommend
 
 app = FastAPI(title="TailTalk API")
 
