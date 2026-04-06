@@ -1,6 +1,7 @@
 from langchain_core.messages import AIMessage
 
 from final_ai.api.dependencies.request_context import ensure_request_active
+from final_ai.application.chat.memory import format_conversation_history
 from final_ai.contracts.filters import normalize_search_filters
 from final_ai.domain.profile.service import (
     build_pet_context,
@@ -48,6 +49,9 @@ def _build_user_message(
     pet_context: str,
     context_block: str,
     pending_names: list[str],
+    memory_summary: str,
+    summary_candidates_text: str,
+    conversation_history_text: str,
 ) -> str:
     pending_categories = state.get("pending_categories") or []
     return (
@@ -62,6 +66,9 @@ def _build_user_message(
         f"- 등록된 건강 관심사: {', '.join(translated_concerns) if translated_concerns else '없음'}\n"
         f"- 건강 특징: {health_traits}\n"
         f"- 전체 펫 정보: {pet_context}\n\n"
+        f"누적 대화 요약:\n{memory_summary or '없음'}\n\n"
+        f"이번 턴에 메모리로 편입할 이전 대화:\n{summary_candidates_text}\n\n"
+        f"최근 대화 기록:\n{conversation_history_text}\n\n"
         f"사용자 질문: {state['user_input']}\n\n"
         f"참고 데이터:\n{context_block}"
     )
@@ -110,6 +117,8 @@ def build_response_state(state: ChatState) -> dict:
     translated_concerns = translate_health_concerns(health_concerns)
     pending_names = _get_pending_names(state)
     context_block = _build_context_block(domain_contexts, reranked_results)
+    summary_candidates_text = format_conversation_history(state.get("summary_candidates"), limit=8)
+    conversation_history_text = format_conversation_history(state.get("conversation_history"), limit=10)
     user_message = _build_user_message(
         state=state,
         pet_name=pet_name,
@@ -119,6 +128,9 @@ def build_response_state(state: ChatState) -> dict:
         pet_context=pet_context,
         context_block=context_block,
         pending_names=pending_names,
+        memory_summary=(state.get("memory_summary") or "").strip(),
+        summary_candidates_text=summary_candidates_text,
+        conversation_history_text=conversation_history_text,
     )
 
     try:
