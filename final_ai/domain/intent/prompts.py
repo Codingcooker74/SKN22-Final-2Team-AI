@@ -22,6 +22,7 @@ INTENT_SYSTEM = f"""
 - breed: 품종명 / null
 - age: 나이 / null
 - mentioned_pet_names: 질문에 언급된 반려동물의 이름 리스트 / []
+- health_concerns: 사용자가 언급한 건강 고민(예: "다이어트", "눈물", "관절", "피부" 등) 리스트 / []
 - exclude_ingredients: 사용자가 명시적으로 제외를 요청한 성분(예: "소고기 없는", "닭고기 안 들어간" 등) 리스트 / []
 - is_next_request: 사용자가 "다음 것도 보여줘", "응 보여줘", "다른 카테고리는?" 등 대기 중인 다른 펫이나 다음 카테고리의 추천을 요청하는 긍정 답변인 경우 true / false
 
@@ -41,6 +42,8 @@ health_disease / care_management / nutrition_diet / behavior_psychology / travel
    -> {{"intents":["recommend"],"target_categories":["사료"],"exclude_ingredients":["소고기"]}}
 6. 후속(긍정): "응 다음 것도 보여줘"
    -> {{"intents":["recommend"],"is_next_request":true}}
+7. 건강 고민: "눈물 개선에 좋은 사료 추천해줘"
+   -> {{"intents":["recommend"],"target_categories":["사료"],"health_concerns":["눈물"]}}
 
 ### 카테고리
 {json.dumps(CATEGORIES, ensure_ascii=False)}

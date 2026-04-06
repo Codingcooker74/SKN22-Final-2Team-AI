@@ -228,6 +228,7 @@ def execute_search_state(state: ChatState) -> dict:
     if relaxation > 0 and not is_strict:
         subcategory = None
     budget = state.get("budget")
+    health_concerns = state.get("health_concerns") or []
 
     pet_type_kr = normalize_pet_species(pet_type)
     if not pet_type_kr:
@@ -239,14 +240,16 @@ def execute_search_state(state: ChatState) -> dict:
         pet_type=pet_type_kr,
         category=category,
         subcategory=subcategory,
+        health_concerns=health_concerns,
         budget=budget,
     )
     logger.info(
-        "search hybrid returned=%s subcategory=%s category=%s pet=%s",
+        "search hybrid returned=%s subcategory=%s category=%s pet=%s health=%s",
         len(candidates),
         subcategory,
         category,
         pet_type_kr,
+        health_concerns,
     )
 
     candidates = [

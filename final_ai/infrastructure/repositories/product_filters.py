@@ -32,6 +32,7 @@ def build_product_filter_clauses(
     pet_type: FilterValue = None,
     category: FilterValue = None,
     subcategory: FilterValue = None,
+    health_concerns: FilterValue = None,
     budget: int | None = None,
 ) -> tuple[list[str], list[object]]:
     filters: list[str] = []
@@ -40,6 +41,7 @@ def build_product_filter_clauses(
     pet_types = normalize_filter_values(pet_type)
     categories = normalize_filter_values(category)
     subcategories = normalize_filter_values(subcategory)
+    concerns = normalize_filter_values(health_concerns)
 
     if pet_types:
         if len(pet_types) == 1:
@@ -64,6 +66,14 @@ def build_product_filter_clauses(
         else:
             filters.append("subcategory && %s::text[]")
             params.append(subcategories)
+
+    if concerns:
+        if len(concerns) == 1:
+            filters.append("%s = ANY(health_concern_tags)")
+            params.append(concerns[0])
+        else:
+            filters.append("health_concern_tags && %s::text[]")
+            params.append(concerns)
 
     if budget is not None:
         filters.append("price <= %s")

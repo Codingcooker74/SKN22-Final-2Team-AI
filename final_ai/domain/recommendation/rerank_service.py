@@ -1,4 +1,5 @@
 import ast
+import re
 
 from final_ai.domain.recommendation.constants import HEALTH_TRAIT_KEYWORDS
 from final_ai.graph.state import ChatState
@@ -18,6 +19,21 @@ def _normalize(values: list[float]) -> list[float]:
     if mx == mn:
         return [1.0] * len(values)
     return [(value - mn) / (mx - mn) for value in values]
+
+
+def _get_base_product_name(full_name: str) -> str:
+    """상품명에서 용량(kg, g, 그램 등) 정보를 제거하여 기본 상품명을 반환합니다."""
+    # 용량 패턴: 숫자 + kg/g/키로/그램/팩/p/입 등 (공백 허용)
+    weight_pattern = r"\b\d+(\.\d+)?\s*(kg|g|키로|그램|팩|p|입|개입|l|ml)\b"
+    # 대괄호 안의 용량 정보도 포함 (예: [1.2kg])
+    bracket_pattern = r"\[\d+(\.\d+)?\s*(kg|g|키로|그램|팩|p|입|개입|l|ml)\]"
+    
+    name = re.sub(weight_pattern, "", full_name, flags=re.IGNORECASE)
+    name = re.sub(bracket_pattern, "", name, flags=re.IGNORECASE)
+    
+    # 연속된 공백 및 특수기호 정리 (예: "상품명   " -> "상품명")
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
 
 
 def rerank_search_results(state: ChatState) -> dict:
@@ -97,16 +113,47 @@ def rerank_search_results(state: ChatState) -> dict:
 
         scored.append((score, candidate))
 
+    # 점수 높은 순으로 정렬
     scored.sort(key=lambda item: item[0], reverse=True)
-    top = [candidate for _, candidate in scored[:TOP_K]]
+    
+    # 중복 상품군 필터링 (용량만 다른 상품 중 점수가 가장 높은 것 하나만 선택)
+    unique_top = []
+    seen_products = set()
+    
+    for score, candidate in scored:
+        full_name = candidate.get("goods_name", "")
+        base_name = _get_base_product_name(full_name)
+        
+        # 이미 선택된 상품군이면 건너뜀 (이미 점수가 높은 순으로 들어오고 있으므로)
+        if base_name and base_name in seen_products:
+            continue
+            
+        seen_products.add(base_name)
+        
+        logger.info(
+            "PRODUCT SCORE: name=%r score=%.4f rrf=%.2f pop=%.2f sent=%.2f",
+            full_name,
+            score,
+            candidate.get("_score", 0.0),
+            candidate.get("popularity_score") or 0.0,
+            candidate.get("sentiment_avg") or 0.0,
+        )
+        
+        candidate_with_score = dict(candidate)
+        candidate_with_score["rerank_score"] = float(score)
+        unique_top.append(candidate_with_score)
+        
+        # 상위 K개만 수집
+        if len(unique_top) >= TOP_K:
+            break
 
-    should_retry = len(top) < 3 and relaxation < 1
+    should_retry = len(unique_top) < 3 and relaxation < 1
     new_relaxation = relaxation + 1 if should_retry else relaxation
     mode_str = "POPULARITY" if is_popularity_mode else "NORMAL"
-    logger.info("rerank mode=%s final=%s relaxation=%s", mode_str, len(top), relaxation)
+    logger.info("rerank mode=%s final=%s relaxation=%s", mode_str, len(unique_top), relaxation)
 
     return {
-        "reranked_results": top,
+        "reranked_results": unique_top,
         "filter_relaxation_count": new_relaxation,
         "recommend_retry_pending": should_retry,
     }

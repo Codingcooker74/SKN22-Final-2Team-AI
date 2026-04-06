@@ -3,7 +3,6 @@ import re
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
 from final_ai.infrastructure.repositories.pet_repository import (
-    fetch_breed_meta,
     fetch_pet_for_user,
     fetch_pet_preferences,
 )
@@ -123,31 +122,7 @@ def build_profile_state(state: ChatState) -> dict:
         except Exception as exc:
             logger.warning("profile db lookup failed: %s", exc)
 
-    breed_context = ""
-    health_traits = ""
     age_group = _determine_age_group(target_age, target_species)
-
-    if target_breed:
-        try:
-            breed_meta = fetch_breed_meta(target_breed, age_group)
-            if breed_meta:
-                parts = []
-                if breed_meta["preferred_food"]:
-                    parts.append(f"선호 사료: {breed_meta['preferred_food']}")
-                if breed_meta["health_products"]:
-                    parts.append(f"추천 건강제품: {breed_meta['health_products']}")
-                if breed_meta["chunk_text"]:
-                    parts.append(f"품종 특성: {breed_meta['chunk_text']}")
-                breed_context = "\n".join(parts)
-
-                chunk = breed_meta["chunk_text"] or ""
-                match = re.search(r"\[건강 특징\](.*?)(\[|$)", chunk, re.DOTALL)
-                if match:
-                    health_traits = match.group(1).strip()
-                    if "[" in health_traits:
-                        health_traits = health_traits.split("[")[0].strip()
-        except Exception as exc:
-            logger.warning("breed meta lookup failed: %s", exc)
 
     logger.info("profile built user=%s pet=%s breed=%s", user_id, pet_profile.get("name"), pet_profile.get("breed"))
     return {
@@ -155,8 +130,6 @@ def build_profile_state(state: ChatState) -> dict:
         "health_concerns": health_concerns,
         "allergies": allergies,
         "food_preferences": food_prefs,
-        "breed_context": breed_context,
-        "health_traits": health_traits,
         "budget": budget_val,
         "pet_mismatch": pet_mismatch,
         "age_group": age_group,

@@ -16,6 +16,19 @@ from final_ai.graph.state import ChatState
 
 logger = get_logger(__name__)
 
+# 건강 고민 표준 태그 매핑 사전
+HEALTH_CONCERN_MAP = {
+    "체중": ["다이어트", "살", "비만", "체중조절", "저칼로리", "슬림"],
+    "눈물": ["눈물자국", "눈건강", "눈세정", "아이케어"],
+    "피부": ["아토피", "가려움", "알러지", "피부염", "피부건강", "피부/모질"],
+    "관절": ["슬개골", "뼈", "관절건강", "다리", "튼튼"],
+    "소화": ["장", "변비", "설사", "소화불량", "위건강", "소화/장"],
+    "치아": ["양치", "치석", "구강", "입냄새", "덴탈"],
+    "요로": ["신장", "방광", "결석", "신장건강"],
+    "헤어볼": ["그루밍", "헤어볼제거"],
+    "면역": ["체력", "활력", "항산화", "면역력"],
+}
+
 
 def _build_context(
     *,
@@ -93,9 +106,20 @@ def classify_intent(state: ChatState) -> dict:
     new_intents = result.get("intents") or []
     mentioned_names = result.get("mentioned_pet_names") or []
     exclude_ingredients = result.get("exclude_ingredients") or []
+    raw_health_concerns = result.get("health_concerns") or []
     is_next_request = result.get("is_next_request", False)
     target_categories = result.get("target_categories") or []
     is_explicit_pet_info = bool(result.get("pet_type") or result.get("breed"))
+
+    # 건강 고민 표준 태그로 변환 로직
+    detected_health_concerns = []
+    for raw in raw_health_concerns:
+        mapped_tag = raw
+        for tag, keywords in HEALTH_CONCERN_MAP.items():
+            if any(keyword in raw for keyword in keywords) or raw == tag:
+                mapped_tag = tag
+                break
+        detected_health_concerns.append(mapped_tag)
 
     is_pet_switched = False
     switched_pet_name = None
@@ -288,6 +312,9 @@ def classify_intent(state: ChatState) -> dict:
         set((overridden_metadata.get("allergies") or state.get("allergies") or []) + exclude_ingredients)
     )
 
+    current_health_concerns = overridden_metadata.get("health_concerns") or state.get("health_concerns") or []
+    combined_health_concerns = list(set(current_health_concerns + detected_health_concerns))
+
     return {
         "intents": new_intents,
         "target_pet_id": target_pet_id,
@@ -309,5 +336,6 @@ def classify_intent(state: ChatState) -> dict:
         "form_hint": form_hint,
         "filter_relaxation_count": 0 if target_categories else state.get("filter_relaxation_count", 0),
         "allergies": combined_allergies,
+        "health_concerns": combined_health_concerns,
         **overridden_metadata,
     }
