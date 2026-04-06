@@ -1,6 +1,7 @@
 import json
 
 from final_ai.api.dependencies.request_context import ensure_request_active
+from final_ai.application.chat.memory import format_conversation_history
 from final_ai.contracts.filters import (
     SearchFilters,
     build_search_filters,
@@ -26,8 +27,17 @@ def _build_context(
     prev_pet: dict,
     target_pet_id: str | None,
 ) -> str:
+    context_parts = []
+    memory_summary = (state.get("memory_summary") or "").strip()
+    if memory_summary:
+        context_parts.append(f"누적 대화 요약:\n{memory_summary}")
+
+    history_text = format_conversation_history(state.get("conversation_history"), limit=10)
+    if history_text != "없음":
+        context_parts.append(f"최근 대화 기록:\n{history_text}")
+
     if not ((state.get("clarification_count", 0) > 0 or prev_intents) and user_input):
-        return ""
+        return "\n\n".join(context_parts)
 
     prev_data = {
         "intents": prev_intents,
@@ -36,7 +46,8 @@ def _build_context(
         "current_pet_id": target_pet_id,
         "user_registered_pets": [pet["name"] for pet in user_pets],
     }
-    return f"\n이전 대화 정보 및 등록된 펫 정보: {json.dumps(prev_data, ensure_ascii=False)}"
+    context_parts.append(f"이전 대화 상태 및 등록된 펫 정보: {json.dumps(prev_data, ensure_ascii=False)}")
+    return "\n\n".join(context_parts)
 
 
 def _classify_user_input(user_input: str, context: str) -> dict:

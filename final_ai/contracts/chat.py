@@ -1,4 +1,11 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+
+class ConversationHistoryItem(BaseModel):
+    role: str
+    content: str
 
 
 class ChatRequest(BaseModel):
@@ -11,6 +18,9 @@ class ChatRequest(BaseModel):
     health_concerns: list[str] = Field(default_factory=list)
     allergies: list[str] = Field(default_factory=list)
     food_preferences: list[str] = Field(default_factory=list)
+    conversation_history: list[ConversationHistoryItem] = Field(default_factory=list)
+    memory_summary: str = ""
+    dialog_state: dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionCreateRequest(BaseModel):

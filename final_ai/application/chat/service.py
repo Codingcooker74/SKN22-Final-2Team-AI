@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import Request
 
+from final_ai.application.chat.memory import build_memory_payload
 from final_ai.api.dependencies import RequestAuthContext, RequestCancelled, bind_request_cancel_event
 from final_ai.application.chat.graph_service import invoke_chat_graph
 from final_ai.application.chat.dto import build_chat_execution_request
@@ -105,6 +106,7 @@ async def stream_chat_events(req: ChatRequest, request: Request) -> AsyncIterato
         "chat stream completed",
         extra={**log_extra, "product_count": len(product_cards)},
     )
+    memory_payload = build_memory_payload(final_state)
     yield "products", {"cards": product_cards}
     yield "final", {
         "message": response_text,
@@ -113,5 +115,6 @@ async def stream_chat_events(req: ChatRequest, request: Request) -> AsyncIterato
             "request_id": log_extra.get("request_id", ""),
             "session_id": log_extra.get("session_id", ""),
         },
+        "memory": memory_payload,
     }
     yield "done", {}

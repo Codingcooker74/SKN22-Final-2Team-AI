@@ -9,6 +9,8 @@ from final_ai.contracts.filters import SearchFilters
 class ChatState(TypedDict):
     messages: Annotated[list, add_messages]
     user_input: str
+    conversation_history: list[dict]
+    memory_summary: str
 
     user_id: str | None
     target_pet_id: str | None

@@ -42,12 +42,24 @@ class ChatExecutionRequestTests(unittest.TestCase):
             user_id="user-1",
             target_pet_id="pet-1",
             allergies=["닭"],
+            conversation_history=[{"role": "user", "content": "이전 질문"}],
+            memory_summary="기존 요약",
+            dialog_state={
+                "intents": ["recommend"],
+                "filters": {"pet_type": "강아지", "category": "사료"},
+                "clarification_count": 2,
+            },
         )
 
         execution = build_chat_execution_request(request)
 
         self.assertEqual(execution.initial_state["user_input"], "사료 추천")
         self.assertEqual(execution.initial_state["allergies"], ["닭"])
+        self.assertEqual(execution.initial_state["conversation_history"], [{"role": "user", "content": "이전 질문"}])
+        self.assertEqual(execution.initial_state["memory_summary"], "기존 요약")
+        self.assertEqual(execution.initial_state["intents"], ["recommend"])
+        self.assertEqual(execution.initial_state["filters"], {"pet_type": "강아지", "category": "사료"})
+        self.assertEqual(execution.initial_state["clarification_count"], 2)
         self.assertEqual(execution.config["configurable"]["thread_id"], "thread-1")
         self.assertEqual(
             execution.config["metadata"],
@@ -85,17 +97,12 @@ class StreamChatEventsTests(unittest.TestCase):
         self.assertEqual(events[0], ("info", {"content": "초코에 어울리는 사료를 찾는 중입니다..."}))
         self.assertEqual("".join(payload["content"] for event_type, payload in events if event_type == "token"), "좋은 사료입니다")
         self.assertEqual(events[-3], ("products", {"cards": [{"goods_id": "A1"}]}))
-        self.assertEqual(
-            events[-2],
-            (
-                "final",
-                {
-                    "message": "좋은 사료입니다",
-                    "cards": [{"goods_id": "A1"}],
-                    "meta": {"request_id": "req-1", "session_id": "thread-1"},
-                },
-            ),
-        )
+        self.assertEqual(events[-2][0], "final")
+        self.assertEqual(events[-2][1]["message"], "좋은 사료입니다")
+        self.assertEqual(events[-2][1]["cards"], [{"goods_id": "A1"}])
+        self.assertEqual(events[-2][1]["meta"], {"request_id": "req-1", "session_id": "thread-1"})
+        self.assertIn("memory", events[-2][1])
+        self.assertEqual(events[-2][1]["memory"]["dialog_state"]["intents"], [])
         self.assertEqual(events[-1], ("done", {}))
 
     def test_stream_chat_events_yields_error_event_when_graph_fails(self):

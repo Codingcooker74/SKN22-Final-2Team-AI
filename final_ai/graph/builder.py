@@ -1,4 +1,3 @@
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
@@ -127,8 +126,9 @@ def build_graph(checkpointer=None):
     graph_builder.add_edge("merge", "respond")
     graph_builder.add_edge("respond", END)
 
-    checkpointer_instance = checkpointer or MemorySaver()
-    return graph_builder.compile(checkpointer=checkpointer_instance)
+    if checkpointer is not None:
+        return graph_builder.compile(checkpointer=checkpointer)
+    return graph_builder.compile()
 
 
 graph = build_graph()
@@ -148,6 +148,8 @@ def chat(
     initial_state = {
         "user_input": user_input,
         "messages": [],
+        "conversation_history": [],
+        "memory_summary": "",
         "pet_profile": pet_profile,
         "health_concerns": health_concerns or [],
         "allergies": allergies or [],
