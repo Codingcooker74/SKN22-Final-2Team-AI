@@ -30,13 +30,22 @@ def _build_context_block(domain_contexts: list[str], reranked_results: list[dict
     return "\n\n".join(context_parts) if context_parts else "검색된 정보가 없습니다."
 
 
-def _get_pending_names(state: ChatState) -> list[str]:
-    pending_ids = state.get("pending_pet_ids") or []
-    if not (pending_ids and state.get("user_id")):
+def _get_pending_info(state: ChatState) -> list[dict]:
+    """pending_requests 큐에서 대기 중인 펫이름+카테고리 정보를 추출합니다."""
+    pending_requests = state.get("pending_requests") or []
+    if not pending_requests:
         return []
+    user_id = state.get("user_id")
+    all_pets = get_user_pets(user_id) if user_id else []
+    pet_id_to_name = {str(pet["pet_id"]): pet["name"] for pet in all_pets}
 
-    all_pets = get_user_pets(state["user_id"])
-    return [pet["name"] for pet in all_pets if pet["pet_id"] in pending_ids]
+    result = []
+    for req in pending_requests:
+        pet_id = req.get("pet_id")
+        category = req.get("category")
+        pet_name = pet_id_to_name.get(str(pet_id)) if pet_id else None
+        result.append({"pet_name": pet_name, "category": category})
+    return result
 
 
 def _build_user_message(
@@ -48,20 +57,32 @@ def _build_user_message(
     health_traits: str,
     pet_context: str,
     context_block: str,
-    pending_names: list[str],
+    pending_info: list[dict],
     memory_summary: str,
     summary_candidates_text: str,
     conversation_history_text: str,
 ) -> str:
-    pending_categories = state.get("pending_categories") or []
+    # 다음 대기 항목 정보 구성
+    if pending_info:
+        next_item = pending_info[0]
+        next_pet = next_item.get("pet_name") or "(현재 펫)"
+        next_cat = next_item.get("category") or "상품"
+        next_queue_desc = f"{next_pet}의 {next_cat}"
+    else:
+        next_queue_desc = "없음"
+
+    pending_desc = ", ".join(
+        f"{item.get('pet_name') or '현재 펫'}의 {item.get('category') or '상품'}"
+        for item in pending_info
+    ) if pending_info else "없음"
+
     return (
         "현재 상황 정보:\n"
         f"- 펫 이름: {pet_name}\n"
         f"- 펫 전환 발생: {'YES' if state.get('is_pet_switched') else 'NO'}\n"
         f"- 전환된 펫 이름: {state.get('switched_pet_name') or 'N/A'}\n"
-        f"- 대기 중인 펫 목록: {', '.join(pending_names) if pending_names else '없음'}\n"
-        f"- 대기 중인 카테고리: {', '.join(pending_categories) if pending_categories else '없음'}\n"
-        f"- 다음_카테고리: {pending_categories[0] if pending_categories else 'N/A'}\n"
+        f"- 대기 중인 추천 목록: {pending_desc}\n"
+        f"- 다음_추천: {next_queue_desc}\n"
         f"- 카테고리: {category}\n"
         f"- 등록된 건강 관심사: {', '.join(translated_concerns) if translated_concerns else '없음'}\n"
         f"- 건강 특징: {health_traits}\n"
@@ -115,7 +136,7 @@ def build_response_state(state: ChatState) -> dict:
     category = filters.get("category") or "상품"
     health_traits = state.get("health_traits") or "특별한 데이터가 없습니다."
     translated_concerns = translate_health_concerns(health_concerns)
-    pending_names = _get_pending_names(state)
+    pending_info = _get_pending_info(state)
     context_block = _build_context_block(domain_contexts, reranked_results)
     summary_candidates_text = format_conversation_history(state.get("summary_candidates"), limit=8)
     conversation_history_text = format_conversation_history(state.get("conversation_history"), limit=10)
@@ -127,7 +148,7 @@ def build_response_state(state: ChatState) -> dict:
         health_traits=health_traits,
         pet_context=pet_context,
         context_block=context_block,
-        pending_names=pending_names,
+        pending_info=pending_info,
         memory_summary=(state.get("memory_summary") or "").strip(),
         summary_candidates_text=summary_candidates_text,
         conversation_history_text=conversation_history_text,
