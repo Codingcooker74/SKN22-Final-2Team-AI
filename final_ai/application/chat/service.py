@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import Request
 
+from final_ai.application.chat.context import ChatContextLoadError, hydrate_chat_request
 from final_ai.application.chat.memory import build_memory_payload
 from final_ai.api.dependencies import RequestAuthContext, RequestCancelled, bind_request_cancel_event
 from final_ai.application.chat.graph_service import invoke_chat_graph
@@ -51,6 +52,13 @@ async def _stream_response_tokens(
 
 async def stream_chat_events(req: ChatRequest, request: Request) -> AsyncIterator[tuple[ChatEventType, dict]]:
     auth_context: RequestAuthContext | None = getattr(request.state, "auth_context", None)
+    try:
+        req = hydrate_chat_request(req)
+    except ChatContextLoadError as exc:
+        logger.warning("chat context load failed: %s", exc)
+        yield "error", {"message": "대화 문맥을 불러오지 못했습니다. 다시 시도해 주세요."}
+        return
+
     execution_request = build_chat_execution_request(req)
     log_extra = (
         auth_context.log_extra(thread_id=req.thread_id, target_pet_id=req.target_pet_id)

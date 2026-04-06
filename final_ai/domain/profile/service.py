@@ -3,6 +3,7 @@ from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
 from final_ai.infrastructure.repositories.pet_repository import (
     fetch_pet_full_profile,
+    fetch_future_pet_profile,
     fetch_pet_name_for_user,
     fetch_user_pets,
 )
@@ -86,4 +87,15 @@ def get_pet_full_profile(pet_id: str) -> dict:
         return fetch_pet_full_profile(pet_id)
     except Exception as exc:
         logger.warning("failed to fetch pet full profile: %s", exc)
+        return {}
+
+
+def get_future_pet_profile(user_id: str) -> dict:
+    if not user_id:
+        return {}
+
+    try:
+        return fetch_future_pet_profile(user_id) or {}
+    except Exception as exc:
+        logger.warning("failed to fetch future pet profile: %s", exc)
         return {}

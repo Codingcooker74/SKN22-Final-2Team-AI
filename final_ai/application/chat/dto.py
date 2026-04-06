@@ -28,24 +28,31 @@ def _history_to_messages(history: list[dict[str, Any]]) -> list:
 
 def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
     dialog_state = dict(req.dialog_state or {})
+    resolved_target_pet_id = dialog_state.get("target_pet_id") or req.target_pet_id
     conversation_history = [
-        item.model_dump() if hasattr(item, "model_dump") else dict(item)
+        item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(item)
         for item in (req.conversation_history or [])
+    ]
+    summary_candidates = [
+        item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else dict(item)
+        for item in (req.summary_candidates or [])
     ]
     metadata = {
         "request_id": getattr(req, "request_id", None),
         "session_id": req.thread_id,
         "user_id": req.user_id,
-        "target_pet_id": req.target_pet_id,
+        "target_pet_id": resolved_target_pet_id,
     }
     initial_state = {
         **dialog_state,
         "user_input": req.message,
         "messages": _history_to_messages(conversation_history),
         "conversation_history": conversation_history,
+        "summary_candidates": summary_candidates,
         "memory_summary": (req.memory_summary or "").strip(),
+        "last_compacted_message_id": req.last_compacted_message_id,
         "user_id": req.user_id or dialog_state.get("user_id"),
-        "target_pet_id": req.target_pet_id or dialog_state.get("target_pet_id"),
+        "target_pet_id": resolved_target_pet_id,
         "pet_profile": req.pet_profile if req.pet_profile is not None else dict(dialog_state.get("pet_profile") or {}),
         "health_concerns": req.health_concerns or list(dialog_state.get("health_concerns") or []),
         "allergies": req.allergies or list(dialog_state.get("allergies") or []),

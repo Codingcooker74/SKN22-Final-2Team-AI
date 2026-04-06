@@ -196,3 +196,39 @@ def fetch_breed_meta(breed_name: str, age_group: str) -> dict | None:
             cur.close()
         if conn is not None:
             conn.close()
+
+
+def fetch_future_pet_profile(user_id: str) -> dict | None:
+    if not user_id:
+        return None
+
+    conn = None
+    cur = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT preferred_species, housing_type, experience_level, interests
+            FROM future_pet_profile
+            WHERE user_id = %s
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "species": row.get("preferred_species") or "",
+            "lifecycle": "future_guardian",
+            "preferred_species": row.get("preferred_species") or "",
+            "housing_type": row.get("housing_type") or "",
+            "experience_level": row.get("experience_level") or "",
+            "interests": row.get("interests") or [],
+        }
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()

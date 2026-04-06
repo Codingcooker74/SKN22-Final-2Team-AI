@@ -32,6 +32,10 @@ def _build_context(
     if memory_summary:
         context_parts.append(f"누적 대화 요약:\n{memory_summary}")
 
+    summary_candidates_text = format_conversation_history(state.get("summary_candidates"), limit=8)
+    if summary_candidates_text != "없음":
+        context_parts.append(f"이번 턴에 메모리로 편입할 이전 대화:\n{summary_candidates_text}")
+
     history_text = format_conversation_history(state.get("conversation_history"), limit=10)
     if history_text != "없음":
         context_parts.append(f"최근 대화 기록:\n{history_text}")
