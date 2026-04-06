@@ -98,6 +98,7 @@ def hybrid_search_pg(
     pet_type: str | list[str] | None = None,
     category: str | list[str] | None = None,
     subcategory: str | list[str] | None = None,
+    health_concerns: str | list[str] | None = None,
     budget: int | None = None,
 ) -> list[dict]:
     query_vec = embed_query(query)
@@ -130,16 +131,6 @@ def hybrid_search_pg(
             ORDER BY ts_rank(search_vector, plainto_tsquery('simple', %s)) DESC
             LIMIT 100
         """
-        pop_sql = """
-            SELECT goods_id, goods_name, pet_type, category, subcategory,
-                   price, thumbnail_url, product_url, brand_name, discount_price,
-                   popularity_score, sentiment_avg, repeat_rate, health_concern_tags,
-                   rating, review_count, main_ingredients
-            FROM product
-            WHERE 1=1 {filters}
-            ORDER BY popularity_score DESC NULLS LAST, review_count DESC NULLS LAST
-            LIMIT 100
-        """
 
         filter_parts = [
             "AND goods_name NOT ILIKE '%%샘플%%'",
@@ -149,6 +140,7 @@ def hybrid_search_pg(
             pet_type=pet_type_kr,
             category=category,
             subcategory=subcategory,
+            health_concerns=health_concerns,
             budget=budget,
         )
         filter_parts.extend(f"AND {clause}" for clause in common_filters)
@@ -167,10 +159,6 @@ def hybrid_search_pg(
         if not cols:
             cols = keyword_cols
         keyword_rows = [dict(zip(keyword_cols, row)) for row in cur.fetchall()]
-
-        cur.execute(pop_sql.format(filters=filter_str), filter_params_shared)
-        pop_cols = [description[0] for description in cur.description]
-        pop_rows = [dict(zip(pop_cols, row)) for row in cur.fetchall()]
 
         if not vec_rows and not keyword_rows:
             loose_terms = _extract_search_terms(query, category, subcategory)
@@ -232,21 +220,19 @@ def hybrid_search_pg(
         scores: dict[str, float] = {}
         rows_by_id: dict[str, dict] = {}
 
+        # 1. 벡터 검색 순위 반영 (RRF)
         for rank, row in enumerate(vec_rows):
             goods_id = row["goods_id"]
             scores[goods_id] = scores.get(goods_id, 0) + 1 / (rrf_k + rank + 1)
             rows_by_id[goods_id] = row
 
+        # 2. 키워드 검색 순위 반영 (RRF)
         for rank, row in enumerate(keyword_rows):
             goods_id = row["goods_id"]
             scores[goods_id] = scores.get(goods_id, 0) + 1 / (rrf_k + rank + 1)
             rows_by_id[goods_id] = row
 
-        for rank, row in enumerate(pop_rows):
-            goods_id = row["goods_id"]
-            scores[goods_id] = scores.get(goods_id, 0) + 1 / (rrf_k + rank + 1)
-            rows_by_id[goods_id] = row
-
+        # 최종 _score 산출 및 정렬
         sorted_ids = sorted(scores, key=lambda goods_id: scores[goods_id], reverse=True)
         results = []
         for goods_id in sorted_ids[:top_k]:

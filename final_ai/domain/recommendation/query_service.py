@@ -1,8 +1,5 @@
-from final_ai.api.dependencies.request_context import ensure_request_active
 from final_ai.contracts.filters import build_search_filters, normalize_search_filters
-from final_ai.domain.profile.service import build_pet_context
 from final_ai.domain.recommendation.constants import STRICT_SUBCATEGORIES
-from final_ai.infrastructure.llm.openai_client import LLM_MODEL, llm
 from final_ai.infrastructure.observability import get_logger
 from final_ai.graph.state import ChatState
 
@@ -10,64 +7,80 @@ logger = get_logger(__name__)
 
 
 def build_search_query_state(state: ChatState) -> dict:
-    pet_ctx = build_pet_context(state)
+    """
+    지정된 핵심 정보를 조합하여 검색 쿼리를 생성합니다.
+    포함 정보: species(pet_type), breed, category, subcategory, health_concerns, age_group
+    """
     filters = normalize_search_filters(state.get("filters"))
     relaxation = state.get("filter_relaxation_count", 0)
+    pet_profile = state.get("pet_profile") or {}
 
+    # 1. 정보 수집 및 정규화
+    # 종(species) 정보: filters에 없으면 프로필에서 가져옴
+    raw_species = filters.get("pet_type") or pet_profile.get("species") or ""
+    
+    # 검색어용 한국어 변환 (dog -> 강아지, cat -> 고양이)
+    if isinstance(raw_species, str):
+        lowered = raw_species.lower()
+        if lowered in ["dog", "강아지"]:
+            pet_type = "강아지"
+        elif lowered in ["cat", "고양이"]:
+            pet_type = "고양이"
+        else:
+            pet_type = raw_species
+    else:
+        pet_type = ""
+    
+    # 품종(breed)
+    breed = pet_profile.get("breed") or ""
+    
+    # 카테고리 / 소분류
     category_hint = filters.get("category") or ""
     raw_sub = filters.get("subcategory") or ""
     is_strict = raw_sub in STRICT_SUBCATEGORIES if raw_sub else False
     subcategory_hint = raw_sub if (relaxation == 0 or is_strict) else ""
 
-    prominent_concerns = ", ".join(state.get("health_concerns") or [])
-    if prominent_concerns:
-        concern_clause = (
-            f"- **특히 다음 건강 고민사항을 반드시 해결할 수 있는 상품 위주로 검색어를 구성하세요: {prominent_concerns}**\n"
-            f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
-            f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 '캔'을 언급하면 반드시 '캔'이 포함된 소분류를, "
-            f"'파우치'를 언급하면 '파우치'가 포함된 소분류를 선택하세요.**"
-        )
+    # 건강 고민 및 연령대
+    concerns = state.get("health_concerns") or []
+    age_group = state.get("age_group") or ""
+
+    # 2. 쿼리 구성 요소 수집 (순서: 종 -> 품종 -> 카테고리 -> 소분류 -> 건강고민 -> 연령대)
+    query_parts = []
+    
+    if pet_type:
+        query_parts.append(pet_type)
+    
+    # 품종이 종 이름과 겹치지 않을 때만 추가 (예: "강아지 강아지" 방지)
+    if breed and breed != pet_type:
+        query_parts.append(breed)
+        
+    if category_hint:
+        query_parts.append(category_hint)
+    if subcategory_hint and subcategory_hint != category_hint:
+        query_parts.append(subcategory_hint)
+    
+    # 건강 고민 키워드 추가
+    for concern in concerns:
+        if concern not in query_parts:
+            query_parts.append(concern)
+            
+    # 연령대 정보 추가
+    if age_group:
+        if age_group not in query_parts:
+            query_parts.append(age_group)
+
+    # 3. 최종 검색어 조합
+    if not query_parts:
+        search_query = state.get("user_input", "").strip()
     else:
-        concern_clause = (
-            f"- **사료(주식)와 간식(보상용)을 엄격히 구분하세요.**\n"
-            f"- **캔(Can)과 파우치(Pouch)는 서로 다른 제형입니다. 사용자가 '캔'을 언급하면 반드시 '캔'이 포함된 소분류를, "
-            f"'파우치'를 언급하면 '파우치'가 포함된 소분류를 선택하세요.**"
-        )
+        search_query = " ".join(query_parts).strip()
 
-    prompt = (
-        "반려동물 상품 검색을 위한 최적화된 한국어 검색어를 한 문장으로만 반환하세요.\n"
-        "중요: 검색어에는 '어덜트', '시니어' 단어를 직접 포함하지 마세요.\n"
-        f"펫 정보: {pet_ctx}\n"
-        f"연령대: {state.get('age_group') or '없음'}\n"
-        f"품종 특성 지식:\n{state.get('breed_context') or '없음'}\n"
-        f"제외 성분: {', '.join(state.get('allergies') or []) or '없음'}\n"
-        f"카테고리: {category_hint} / 세부: {subcategory_hint}\n"
-        f"{concern_clause}\n"
-        f"원래 질문: {state['user_input']}"
-    )
-    try:
-        ensure_request_active()
-        search_query = llm.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        ).choices[0].message.content.strip()
-    except Exception as exc:
-        fallback_parts = [category_hint, subcategory_hint, state["user_input"]]
-        search_query = " ".join(part for part in fallback_parts if part).strip() or state["user_input"]
-        logger.warning("query llm fallback used: %s", exc)
-
-    query_age_group = state.get("age_group")
-    if query_age_group == "키튼" and "키튼" not in search_query:
-        search_query = f"{search_query} 키튼"
-    elif query_age_group == "퍼피" and "퍼피" not in search_query:
-        search_query = f"{search_query} 퍼피"
-
-    logger.info("search query built query=%r relaxation=%s", search_query, relaxation)
+    logger.info("search query built (Deterministic) query=%r relaxation=%s", search_query, relaxation)
+    
     return {
         "search_query": search_query,
         "filters": build_search_filters(
-            pet_type=filters.get("pet_type"),
+            pet_type=pet_type,
             category=category_hint,
             subcategory=subcategory_hint,
         ),
