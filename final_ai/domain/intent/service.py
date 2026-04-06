@@ -88,8 +88,7 @@ def classify_intent(state: ChatState) -> dict:
     prev_filters = normalize_search_filters(state.get("filters"))
     prev_pet = state.get("pet_profile") or {}
     target_pet_id = state.get("target_pet_id")
-    pending_pet_ids = state.get("pending_pet_ids") or []
-    pending_categories = state.get("pending_categories") or []
+    pending_requests = list(state.get("pending_requests") or [])
 
     user_pets = get_user_pets(user_id) if user_id else []
     context = _build_context(
@@ -124,30 +123,51 @@ def classify_intent(state: ChatState) -> dict:
     is_pet_switched = False
     switched_pet_name = None
     overridden_metadata = {}
+    _pending_form_hint = None  # pending entry에 저장된 form_hint 복원용 (다중 펫 시나리오)
 
     if is_next_request:
-        if pending_categories:
-            target_categories = [pending_categories.pop(0)]
+        if pending_requests:
+            next_req = pending_requests.pop(0)
+            next_pet_id = next_req.get("pet_id")
+            next_category = next_req.get("category")
+
+            # 펫 전환이 필요한 경우
+            if next_pet_id:
+                full_profile = get_pet_full_profile(next_pet_id)
+                if full_profile:
+                    target_pet_id = next_pet_id
+                    prev_pet = full_profile["pet_profile"]
+                    overridden_metadata = {
+                        "health_concerns": full_profile["health_concerns"],
+                        "allergies": full_profile["allergies"],
+                        "food_preferences": full_profile["food_preferences"],
+                    }
+                    is_pet_switched = True
+                    switched_pet_name = prev_pet.get("name")
+
+            # 카테고리 설정 (펫 전환과 무관하게 적용)
+            if next_category:
+                target_categories = [next_category]
+
             new_intents = ["recommend"]
-        elif pending_pet_ids:
-            next_id = pending_pet_ids.pop(0)
-            full_profile = get_pet_full_profile(next_id)
-            if full_profile:
-                target_pet_id = next_id
-                prev_pet = full_profile["pet_profile"]
-                overridden_metadata = {
-                    "health_concerns": full_profile["health_concerns"],
-                    "allergies": full_profile["allergies"],
-                    "food_preferences": full_profile["food_preferences"],
-                }
-                is_pet_switched = True
-                switched_pet_name = prev_pet.get("name")
-                new_intents = ["recommend"]
+
+            # pending entry에 저장된 form_hint를 현재 처리에 복원
+            # (이전 턴에 다중 펫 처리 시 pending에 저장해뒀던 form_hint)
+            _pending_form_hint = next_req.get("form_hint")
+        else:
+            _pending_form_hint = None
     elif mentioned_names:
-        matched_pets = [pet for pet in user_pets if pet["name"] in mentioned_names]
+        # ★ 핵심 수정: DB 등록 순서가 아닌 사용자 입력 순서(mentioned_names)로 정렬
+        # 예: "초코 사료랑 바나나 모래" → mentioned_names=["초코","바나나"] 순서 보장
+        raw_matched = [pet for pet in user_pets if pet["name"] in mentioned_names]
+        matched_pets = sorted(
+            raw_matched,
+            key=lambda p: mentioned_names.index(p["name"]) if p["name"] in mentioned_names else 999,
+        )
         if matched_pets:
             first_pet = matched_pets[0]
             if str(first_pet["pet_id"]) != str(target_pet_id):
+                # 현재 펫과 다를 경우 → 프로필 전환
                 full_profile = get_pet_full_profile(str(first_pet["pet_id"]))
                 if full_profile:
                     target_pet_id = str(first_pet["pet_id"])
@@ -163,11 +183,24 @@ def classify_intent(state: ChatState) -> dict:
                     switched_pet_name = prev_pet.get("name")
                     if "recommend" not in new_intents:
                         new_intents.append("recommend")
-            for pet in matched_pets[1:]:
+            else:
+                # 현재 펫과 동일(초코가 이미 선택된 상태) → 프로필 전환 없이 카테고리만 처리
+                logger.info("first mentioned pet is already the current pet: %s", first_pet.get("name"))
+
+            # 두 번째 이후 펫+카테고리를 통합 큐에 쌍으로 등록
+            # target_categories[0] = 첫 번째 펫 카테고리, target_categories[1:] = 나머지 펫 카테고리
+            remaining_categories = list(target_categories[1:]) if len(target_categories) > 1 else []
+            for i, pet in enumerate(matched_pets[1:]):
                 pet_id = str(pet["pet_id"])
-                if pet_id != target_pet_id and pet_id not in pending_pet_ids:
-                    pending_pet_ids.append(pet_id)
+                pending_cat = remaining_categories[i] if i < len(remaining_categories) else None
+                pending_entry = {"pet_id": pet_id, "category": pending_cat}
+                # 이미 동일한 pet_id가 큐에 없을 때만 추가
+                if not any(r.get("pet_id") == pet_id for r in pending_requests):
+                    pending_requests.append(pending_entry)
+            # 다중 펫+카테고리가 이미 쌍으로 등록됐음을 표시 → 아래 단일 펫 카테고리 로직 중복 방지
+            multi_pet_categories_registered = len(matched_pets) > 1 and bool(remaining_categories)
     elif is_explicit_pet_info:
+        multi_pet_categories_registered = False
         new_species = None
         if result.get("pet_type") == "강아지":
             new_species = "dog"
@@ -205,6 +238,9 @@ def classify_intent(state: ChatState) -> dict:
         else:
             new_intents = ["unclear"]
 
+    else:
+        multi_pet_categories_registered = False
+
     new_pet = dict(prev_pet)
     if is_explicit_pet_info and not target_pet_id:
         new_pet = {}
@@ -234,10 +270,11 @@ def classify_intent(state: ChatState) -> dict:
     detected_category = None
     if target_categories:
         detected_category = target_categories[0]
-        if len(target_categories) > 1:
+        # 남은 카테고리(2번째~)는 다중 펫 처리가 안 된 경우에만 현재 펫 유지 상태로 큐에 등록
+        # 다중 펫 처리(초코+사료, 바나나+모래)를 이미 한 경우엔 건너뜀 → 중복 방지
+        if len(target_categories) > 1 and not multi_pet_categories_registered:
             for category in target_categories[1:]:
-                if category not in pending_categories:
-                    pending_categories.append(category)
+                pending_requests.append({"pet_id": None, "category": category})
     elif "recommend" in new_intents and not is_major_switch:
         detected_category = prev_filters.get("category")
 
@@ -280,7 +317,11 @@ def classify_intent(state: ChatState) -> dict:
     }
     previous_form_hint = None if is_major_switch else state.get("form_hint")
     llm_form_hint = result.get("form_hint")
-    detected_form = next((keyword for keyword in ("캔", "파우치") if keyword in user_input), None)
+    # 다중 펫 시나리오: user_input 전체에서 form 탐지하되, is_next_request면 pending entry에서 복원
+    if is_next_request:
+        detected_form = _pending_form_hint  # pending entry에 저장된 form_hint 사용
+    else:
+        detected_form = next((keyword for keyword in ("캔", "파우치") if keyword in user_input), None)
     final_form_hint = detected_form or llm_form_hint or previous_form_hint
 
     form_hint = None
@@ -292,6 +333,19 @@ def classify_intent(state: ChatState) -> dict:
             form_hint = None
         else:
             form_hint = final_form_hint
+
+    # ★ 다중 펫 시나리오: form_hint가 현재 펫이 아닌 pending 펫에 해당할 경우
+    # → pending entry에 form_hint를 저장하고 현재 state에서 제거 (clarify 방지)
+    if form_hint and pending_requests and not is_next_request:
+        for entry in pending_requests:
+            if entry.get("form_hint") is None:
+                entry["form_hint"] = form_hint
+                logger.info(
+                    "form_hint '%s' moved to pending entry pet_id=%s",
+                    form_hint, entry.get("pet_id"),
+                )
+                break
+        form_hint = None  # 현재 state에서 제거 → route_intent가 clarify로 빠지지 않음
 
     if "popularity" in new_intents and "subcategory" in new_filters:
         del new_filters["subcategory"]
@@ -318,8 +372,7 @@ def classify_intent(state: ChatState) -> dict:
     return {
         "intents": new_intents,
         "target_pet_id": target_pet_id,
-        "pending_pet_ids": pending_pet_ids,
-        "pending_categories": pending_categories,
+        "pending_requests": pending_requests,
         "is_pet_switched": is_pet_switched,
         "switched_pet_name": switched_pet_name,
         "domain_intent": result.get("domain_intent") or state.get("domain_intent"),

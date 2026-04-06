@@ -16,8 +16,10 @@ class ChatState(TypedDict):
 
     user_id: str | None
     target_pet_id: str | None
-    pending_pet_ids: list[str]
-    pending_categories: list[str]
+    # 순차 추천 통합 큐: 펫+카테고리를 쌍으로 관리하여 순서 보장
+    # 형식: [{"pet_id": "...", "category": "모래"}, ...]
+    # pet_id가 None이면 현재 펫 유지
+    pending_requests: list[dict]
     is_pet_switched: bool
 
     switched_pet_name: str | None

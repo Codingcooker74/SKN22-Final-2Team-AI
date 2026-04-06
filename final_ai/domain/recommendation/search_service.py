@@ -38,15 +38,15 @@ def _parse_collection(raw) -> list[str]:
     return list(raw)
 
 
-def _filter_by_form_factor(candidates: list[dict], user_input_lower: str) -> list[dict]:
-    logger.debug(
-        "search form factor input=%r has_can=%s has_pouch=%s",
-        user_input_lower,
-        "캔" in user_input_lower,
-        "파우치" in user_input_lower,
-    )
+def _filter_by_form_factor(candidates: list[dict], form_hint: str | None) -> list[dict]:
+    if not form_hint:
+        logger.debug("form factor filter skipped (no form_hint)")
+        return candidates
 
-    if "캔" in user_input_lower and "파우치" not in user_input_lower:
+    form_hint_lower = form_hint.lower()
+    logger.debug("search form factor hint=%r", form_hint_lower)
+
+    if "캔" in form_hint_lower:
         def is_can_product(candidate: dict) -> bool:
             subs = _parse_collection(candidate.get("subcategory") or [])
             name = candidate.get("goods_name", "")
@@ -57,10 +57,10 @@ def _filter_by_form_factor(candidates: list[dict], user_input_lower: str) -> lis
             return "캔" in name
 
         filtered = [candidate for candidate in candidates if is_can_product(candidate)]
-        logger.debug("can filter count=%s preview=%s", len(filtered), [candidate.get("goods_name", "?")[:30] for candidate in filtered[:5]])
+        logger.debug("can filter count=%s", len(filtered))
         return filtered
 
-    if "파우치" in user_input_lower and "캔" not in user_input_lower:
+    if "파우치" in form_hint_lower:
         def is_pouch_product(candidate: dict) -> bool:
             subs = _parse_collection(candidate.get("subcategory") or [])
             name = candidate.get("goods_name", "")
@@ -71,21 +71,16 @@ def _filter_by_form_factor(candidates: list[dict], user_input_lower: str) -> lis
             return "파우치" in name
 
         filtered = [candidate for candidate in candidates if is_pouch_product(candidate)]
-        logger.debug(
-            "pouch filter count=%s preview=%s",
-            len(filtered),
-            [candidate.get("goods_name", "?")[:30] for candidate in filtered[:5]],
-        )
+        logger.debug("pouch filter count=%s", len(filtered))
         return filtered
 
-    logger.debug("form factor filter skipped")
     return candidates
 
 
 def _supplement_gp_candidates(
     candidates: list[dict],
     *,
-    user_input_lower: str,
+    form_hint: str | None,
     pet_type_kr: str | None,
     category: str | None,
     subcategory: str | None,
@@ -100,10 +95,11 @@ def _supplement_gp_candidates(
     try:
         goods_name_include = None
         goods_name_exclude = None
-        if "캔" in user_input_lower and "파우치" not in user_input_lower:
-            goods_name_include = "캔"
-        elif "파우치" in user_input_lower and "캔" not in user_input_lower:
-            goods_name_exclude = "캔"
+        if form_hint:
+            if "캔" in form_hint:
+                goods_name_include = "캔"
+            elif "파우치" in form_hint:
+                goods_name_exclude = "캔"
 
         gp_rows = list_gp_products(
             pet_type=pet_type_kr,
@@ -259,11 +255,11 @@ def execute_search_state(state: ChatState) -> dict:
     ]
     logger.debug("blacklist filter count=%s", len(candidates))
 
-    user_input_lower = state["user_input"].lower()
-    candidates = _filter_by_form_factor(candidates, user_input_lower)
+    form_hint = state.get("form_hint")
+    candidates = _filter_by_form_factor(candidates, form_hint)
     candidates = _supplement_gp_candidates(
         candidates,
-        user_input_lower=user_input_lower,
+        form_hint=form_hint,
         pet_type_kr=pet_type_kr,
         category=category,
         subcategory=subcategory,

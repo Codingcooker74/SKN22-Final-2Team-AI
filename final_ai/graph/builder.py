@@ -158,6 +158,7 @@ def chat(
         "food_preferences": food_preferences or [],
         "user_id": user_id,
         "target_pet_id": target_pet_id,
+        "pending_requests": [],
         "breed_context": None,
         "search_results": [],
         "reranked_results": [],
