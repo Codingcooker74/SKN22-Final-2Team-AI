@@ -31,20 +31,31 @@ def _build_context_block(domain_contexts: list[str], reranked_results: list[dict
 
 
 def _get_pending_info(state: ChatState) -> list[dict]:
-    """pending_requests 큐에서 대기 중인 펫이름+카테고리 정보를 추출합니다."""
+    """pending_requests 및 decomposed_tasks 큐에서 대기 중인 펫이름+카테고리 정보를 추출합니다."""
+    decomposed_tasks = state.get("decomposed_tasks") or []
     pending_requests = state.get("pending_requests") or []
-    if not pending_requests:
-        return []
-    user_id = state.get("user_id")
-    all_pets = get_user_pets(user_id) if user_id else []
-    pet_id_to_name = {str(pet["pet_id"]): pet["name"] for pet in all_pets}
-
+    
     result = []
-    for req in pending_requests:
-        pet_id = req.get("pet_id")
-        category = req.get("category")
-        pet_name = pet_id_to_name.get(str(pet_id)) if pet_id else None
-        result.append({"pet_name": pet_name, "category": category})
+    
+    # 1. decomposed_tasks 먼저 추가 (우선순위 높음)
+    for task in decomposed_tasks:
+        result.append({
+            "pet_name": task.get("pet_name"),
+            "category": task.get("category")
+        })
+
+    # 2. pending_requests 추가
+    if pending_requests:
+        user_id = state.get("user_id")
+        all_pets = get_user_pets(user_id) if user_id else []
+        pet_id_to_name = {str(pet["pet_id"]): pet["name"] for pet in all_pets}
+
+        for req in pending_requests:
+            pet_id = req.get("pet_id")
+            category = req.get("category")
+            pet_name = pet_id_to_name.get(str(pet_id)) if pet_id else None
+            result.append({"pet_name": pet_name, "category": category})
+            
     return result
 
 

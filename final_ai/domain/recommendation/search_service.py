@@ -37,93 +37,6 @@ def _parse_collection(raw) -> list[str]:
         return [raw]
     return list(raw)
 
-
-def _filter_by_form_factor(candidates: list[dict], form_hint: str | None) -> list[dict]:
-    if not form_hint:
-        logger.debug("form factor filter skipped (no form_hint)")
-        return candidates
-
-    form_hint_lower = form_hint.lower()
-    logger.debug("search form factor hint=%r", form_hint_lower)
-
-    if "캔" in form_hint_lower:
-        def is_can_product(candidate: dict) -> bool:
-            subs = _parse_collection(candidate.get("subcategory") or [])
-            name = candidate.get("goods_name", "")
-            if any(sub in PURE_CAN_SUBS for sub in subs):
-                return True
-            if any(sub in MIXED_SUBS for sub in subs) and "캔" in name:
-                return True
-            return "캔" in name
-
-        filtered = [candidate for candidate in candidates if is_can_product(candidate)]
-        logger.debug("can filter count=%s", len(filtered))
-        return filtered
-
-    if "파우치" in form_hint_lower:
-        def is_pouch_product(candidate: dict) -> bool:
-            subs = _parse_collection(candidate.get("subcategory") or [])
-            name = candidate.get("goods_name", "")
-            if any(sub in PURE_POUCH_SUBS for sub in subs):
-                return True
-            if any(sub in MIXED_SUBS for sub in subs) and "캔" not in name:
-                return True
-            return "파우치" in name
-
-        filtered = [candidate for candidate in candidates if is_pouch_product(candidate)]
-        logger.debug("pouch filter count=%s", len(filtered))
-        return filtered
-
-    return candidates
-
-
-def _supplement_gp_candidates(
-    candidates: list[dict],
-    *,
-    form_hint: str | None,
-    pet_type_kr: str | None,
-    category: str | None,
-    subcategory: str | None,
-) -> list[dict]:
-    min_candidates = 5
-    if len(candidates) >= min_candidates:
-        return candidates
-
-    existing_ids = {candidate["goods_id"] for candidate in candidates}
-    needed = max((min_candidates - len(candidates)) * 4, 12)
-
-    try:
-        goods_name_include = None
-        goods_name_exclude = None
-        if form_hint:
-            if "캔" in form_hint:
-                goods_name_include = "캔"
-            elif "파우치" in form_hint:
-                goods_name_exclude = "캔"
-
-        gp_rows = list_gp_products(
-            pet_type=pet_type_kr,
-            category=category,
-            subcategory=subcategory,
-            goods_name_include=goods_name_include,
-            goods_name_exclude=goods_name_exclude,
-            exclude_goods_ids=existing_ids,
-            limit=needed,
-        )
-
-        logger.debug("gp supplement rows=%s", len(gp_rows))
-        if gp_rows:
-            logger.info("gp supplement added=%s current=%s target=%s", len(gp_rows), len(candidates), min_candidates)
-            logger.debug("gp supplement preview=%s", [candidate.get("goods_name", "?")[:30] for candidate in gp_rows[:5]])
-            return candidates + gp_rows
-
-        logger.debug("gp supplement unavailable for requested form factor")
-        return candidates
-    except Exception as exc:
-        logger.warning("gp supplement failed: %s", exc)
-        return candidates
-
-
 def _build_allergy_roots(allergies: list[str]) -> set[str]:
     if not allergies:
         return set()
@@ -176,22 +89,28 @@ def _is_safe_candidate(
     cat_list = _to_normalized_list(candidate.get("category") or [])
 
     is_feed = any(feed_category in value for feed_category in FEED_CATEGORIES for value in cat_list)
-    if is_feed and mandatory_keywords:
-        has_mandatory = any(_normalize_text(keyword) in value for keyword in mandatory_keywords for value in sub_list)
-        has_mandatory = has_mandatory or any(_normalize_text(keyword) in goods_name for keyword in mandatory_keywords)
-        if not has_mandatory:
-            return False
+    
+    # ── 연령별 필터링 (사료 카테고리에만 적용) ──────────────────────────────────
+    if is_feed:
+        # 1. 필수 키워드 검사 (키튼/퍼피/전연령 중 하나는 있어야 함)
+        if mandatory_keywords:
+            has_mandatory = any(_normalize_text(keyword) in value for keyword in mandatory_keywords for value in sub_list)
+            has_mandatory = has_mandatory or any(_normalize_text(keyword) in goods_name for keyword in mandatory_keywords)
+            if not has_mandatory:
+                return False
 
-    for forbidden in forbidden_age_keywords:
-        forbidden_normalized = _normalize_text(forbidden)
-        if any(forbidden_normalized in value for value in sub_list) or forbidden_normalized in goods_name:
-            logger.debug(
-                "age mismatch filtered product=%s forbidden=%s",
-                candidate["goods_name"],
-                forbidden_normalized,
-            )
-            return False
+        # 2. 금지 키워드 검사 (키튼인데 어덜트가 있으면 제외)
+        for forbidden in forbidden_age_keywords:
+            forbidden_normalized = _normalize_text(forbidden)
+            if any(forbidden_normalized in value for value in sub_list) or forbidden_normalized in goods_name:
+                logger.debug(
+                    "age mismatch filtered product=%s forbidden=%s",
+                    candidate["goods_name"],
+                    forbidden_normalized,
+                )
+                return False
 
+    # ── 알러지 필터링 (모든 카테고리에 적용) ────────────────────────────────────
     if allergy_roots:
         for allergy_root in allergy_roots:
             allergy_normalized = _normalize_text(allergy_root)
@@ -254,16 +173,6 @@ def execute_search_state(state: ChatState) -> dict:
         if not any(word in candidate.get("goods_name", "") for word in SAMPLE_BLACKLIST_WORDS)
     ]
     logger.debug("blacklist filter count=%s", len(candidates))
-
-    form_hint = state.get("form_hint")
-    candidates = _filter_by_form_factor(candidates, form_hint)
-    candidates = _supplement_gp_candidates(
-        candidates,
-        form_hint=form_hint,
-        pet_type_kr=pet_type_kr,
-        category=category,
-        subcategory=subcategory,
-    )
 
     target_age_group = state.get("age_group", "어덜트")
     forbidden_age_keywords = AGE_EXCLUDE_KEYWORDS.get(target_age_group, [])

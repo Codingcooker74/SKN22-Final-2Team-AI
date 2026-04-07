@@ -16,6 +16,9 @@ class ChatState(TypedDict):
 
     user_id: str | None
     target_pet_id: str | None
+    # 분해된 하위 작업 리스트 (Query Decomposition 결과물)
+    # 형식: [{"pet_name": "초코", "category": "사료", "health_concern": "체중", "age": "노령"}, ...]
+    decomposed_tasks: list[dict]
     # 순차 추천 통합 큐: 펫+카테고리를 쌍으로 관리하여 순서 보장
     # 형식: [{"pet_id": "...", "category": "모래"}, ...]
     # pet_id가 None이면 현재 펫 유지
@@ -45,7 +48,6 @@ class ChatState(TypedDict):
     reranked_results: list[dict]
     filter_relaxation_count: int
     recommend_retry_pending: bool
-    form_hint: str | None
 
     domain_contexts: list[str]
 

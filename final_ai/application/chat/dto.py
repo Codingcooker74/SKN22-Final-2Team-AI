@@ -58,6 +58,8 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "allergies": req.allergies or list(dialog_state.get("allergies") or []),
         "food_preferences": req.food_preferences or list(dialog_state.get("food_preferences") or []),
         "intents": list(dialog_state.get("intents") or []),
+        "decomposed_tasks": list(dialog_state.get("decomposed_tasks") or []),
+        "pending_requests": list(dialog_state.get("pending_requests") or []),
         "pending_pet_ids": list(dialog_state.get("pending_pet_ids") or []),
         "pending_categories": list(dialog_state.get("pending_categories") or []),
         "clarification_count": int(dialog_state.get("clarification_count") or 0),

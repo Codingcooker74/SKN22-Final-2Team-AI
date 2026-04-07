@@ -43,8 +43,6 @@ def route_intent(state: ChatState):
     if has_recommend:
         if not filters.get("pet_type") and not pet_profile.get("species"):
             return "clarify"
-        if state.get("form_hint"):
-            return "clarify"
         if not filters.get("category") and relaxation == 0:
             return "clarify"
 

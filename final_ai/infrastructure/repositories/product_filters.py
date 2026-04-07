@@ -52,17 +52,26 @@ def build_product_filter_clauses(
             params.append(pet_types)
 
     if categories:
+        # 단일 카테고리인 경우 부분 일치(ILIKE) 지원
         if len(categories) == 1:
-            filters.append("(%s = ANY(category) OR %s = ANY(subcategory))")
-            params.extend([categories[0], categories[0]])
+            cat_pattern = f"%{categories[0]}%"
+            filters.append(
+                "("
+                "EXISTS (SELECT 1 FROM unnest(category) c WHERE c ILIKE %s) OR "
+                "EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)"
+                ")"
+            )
+            params.extend([cat_pattern, cat_pattern])
         else:
             filters.append("(category && %s::text[] OR subcategory && %s::text[])")
             params.extend([categories, categories])
 
     if subcategories:
+        # 단일 서브카테고리인 경우 부분 일치(ILIKE) 지원
         if len(subcategories) == 1:
-            filters.append("%s = ANY(subcategory)")
-            params.append(subcategories[0])
+            sub_pattern = f"%{subcategories[0]}%"
+            filters.append("EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)")
+            params.append(sub_pattern)
         else:
             filters.append("subcategory && %s::text[]")
             params.append(subcategories)
