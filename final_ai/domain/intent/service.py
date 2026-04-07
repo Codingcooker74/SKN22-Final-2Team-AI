@@ -29,23 +29,6 @@ HEALTH_CONCERN_MAP = {
     "면역": ["체력", "활력", "항산화", "면역력"],
 }
 
-# ── 서브카테고리 동의어 매핑 사전 ──────────────────────────────────────────
-SUBCATEGORY_SYNONYMS = {
-    "껌": "덴탈껌",
-    "정수기": "급식/급수기",
-    "물그릇": "급식/급수기",
-    "식기": "급식/급수기",
-    "밥그릇": "급식/급수기",
-    "츄르": "져키/스틱",
-    "스크래쳐": "스크래쳐/캣타워",
-    "캣타워": "스크래쳐/캣타워",
-    "이동장": "이동장/캐리어",
-    "캐리어": "이동장/캐리어",
-    "하우스": "하우스/방석",
-    "방석": "하우스/방석",
-    "패드": "배변패드",
-    "모래": "벤토나이트",
-}
 
 
 def _resolve_category_subcategory(
@@ -56,42 +39,46 @@ def _resolve_category_subcategory(
     pet_type_kr: str,
 ) -> tuple[str | None, str | None]:
     """
-    동의어 매핑 및 계층 구조를 바탕으로 카테고리와 서브카테고리를 보정합니다.
+    category.json의 별칭(aliases) 데이터를 기반으로 카테고리와 서브카테고리를 보정합니다.
+    모든 매칭 후보 중 가장 길게 일치하는 항목을 선택하는 Longest Match 전략을 사용합니다.
     """
     pet_category_map = CATEGORIES.get(pet_type_kr or "강아지", {})
+    # LLM이 제안한 값과 원문 텍스트를 모두 합쳐서 검색 대상으로 함
     combined_text = f"{category or ''} {subcategory or ''} {text_to_search}".strip()
     
-    # 1. 동의어 보정
-    for alias, canonical in SUBCATEGORY_SYNONYMS.items():
-        if alias in combined_text:
-            subcategory = canonical
-            break
+    best_match_len = 0
+    found_sub, found_cat = None, None
+    
+    # 1. 전수 조사를 통한 최적의 서브카테고리 매칭
+    for cat_name, cat_info in pet_category_map.items():
+        sub_dict = cat_info.get("subcategories", {})
+        for canonical, aliases in sub_dict.items():
+            targets = [canonical] + (aliases or [])
+            for target in targets:
+                # 2글자 이상 일치하는지 확인
+                if target in combined_text and len(target) > 1:
+                    # 더 긴 단어가 매칭되면 업데이트 (예: '사료'보다는 '습식사료'가 더 정확함)
+                    if len(target) > best_match_len:
+                        best_match_len = len(target)
+                        found_sub = canonical
+                        found_cat = cat_name
+                    # 길이가 같을 경우, LLM이 원래 제안했던 subcategory와 일치하는 것이 있다면 그것을 유지
+                    elif len(target) == best_match_len and canonical == subcategory:
+                        found_sub = canonical
+                        found_cat = cat_name
 
-    # 2. 키워드 매칭 (표준 명칭이 아닐 때만)
-    standard_names = []
-    for cat_info in pet_category_map.values():
-        standard_names.extend(cat_info.get("subcategories", []))
-        
-    if subcategory not in standard_names:
-        found_sub, found_cat = None, None
+    # 매칭된 결과가 있다면 업데이트, 없으면 LLM 제안값 유지
+    final_sub = found_sub if found_sub else subcategory
+    final_cat = found_cat if found_cat else category
+    
+    # 2. 서브카테고리 기반 부모 카테고리 확정 (서브카테고리는 결정됐으나 카테고리가 없거나 오매칭된 경우 보정)
+    if final_sub:
         for cat_name, cat_info in pet_category_map.items():
-            for sub in cat_info.get("subcategories", []):
-                keywords = [k.strip() for k in sub.replace("(", "/").replace(")", "/").split("/") if k.strip()]
-                if any(k in combined_text and len(k) > 1 for k in keywords):
-                    found_sub, found_cat = sub, cat_name
-                    break
-            if found_sub: break
-        if found_sub:
-            subcategory, category = found_sub, found_cat
-
-    # 3. 부모 카테고리 역추론
-    if subcategory:
-        for cat_name, cat_info in pet_category_map.items():
-            if subcategory in cat_info.get("subcategories", []):
-                category = cat_name
+            if final_sub in cat_info.get("subcategories", {}):
+                final_cat = cat_name
                 break
                 
-    return category, subcategory
+    return final_cat, final_sub
 
 
 def _build_context(
@@ -267,21 +254,25 @@ def classify_intent(state: ChatState) -> dict:
     if new_decomposed_tasks and not is_next_request:
         # [수정] 여러 작업이 감지되면, 현재 턴에서는 첫 번째 작업만 수행하고
         # 나머지는 모두 decomposed_tasks 큐에 쌓습니다.
-        # 이렇게 함으로써 응답 노드에서 "다음 상품도 보여드릴까요?" 질문이 나가게 됩니다.
         first_task = new_decomposed_tasks[0]
-        # 첫 번째 작업을 제외한 나머지를 큐에 저장 (기존에는 1:부터였으므로 동일하지만 의미 명확화)
         decomposed_tasks.extend(new_decomposed_tasks[1:]) 
         
         logger.info("Multi-task detected. Processing first task and queuing %d tasks.", len(new_decomposed_tasks) - 1)
 
-        if first_task.get("pet_name"):
-            mentioned_names = [first_task["pet_name"]]
-        if first_task.get("category"):
-            target_categories = [first_task["category"]]
-        if first_task.get("subcategory"):
-            result["subcategory"] = first_task["subcategory"]
+        # [중요] 복합 질문 시 LLM이 문장 전체에서 추출한 Root 레벨의 필터 정보(잔상)를 초기화합니다.
+        # 이렇게 해야 마지막에 언급된 '모래' 등의 정보가 첫 번째 작업인 '사료'에 섞이지 않습니다.
+        mentioned_names = [first_task["pet_name"]] if first_task.get("pet_name") else []
+        target_categories = [first_task["category"]] if first_task.get("category") else []
+        result["subcategory"] = first_task.get("subcategory") # null이면 null로 명시적 덮어쓰기
+        
+        # [핵심 추가] 하단 Step 6 보정 로직이 문장 전체를 보지 못하도록 현재 태스크의 텍스트로 국소화합니다.
+        current_user_input = f"{first_task.get('pet_name','') or ''} {first_task.get('category','') or ''} {first_task.get('subcategory','') or ''}".strip()
+
         if first_task.get("health_concern"):
             detected_health_concerns = map_health_concerns([first_task["health_concern"]])
+        else:
+            detected_health_concerns = []
+
         if first_task.get("age"):
             result["age"] = first_task["age"]
         
