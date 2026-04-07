@@ -20,11 +20,12 @@ MEMORY_DIALOG_STATE_KEYS = (
     "food_preferences",
     "is_pet_override",
     "pet_mismatch",
-    "form_hint",
     "detected_aspect",
     "budget",
     "filter_relaxation_count",
     "recommend_retry_pending",
+    "decomposed_tasks",
+    "pending_requests",
 )
 SUMMARY_MAX_BULLETS = 6
 SUMMARY_MAX_LINE_LENGTH = 120
@@ -72,7 +73,16 @@ def extract_dialog_state(state: dict) -> dict:
             dialog_state["filters"] = normalize_search_filters(state.get("filters"))
             continue
         value = state.get(key)
-        if key in {"intents", "pending_pet_ids", "pending_categories", "health_concerns", "allergies", "food_preferences"}:
+        if key in {
+            "intents",
+            "pending_pet_ids",
+            "pending_categories",
+            "health_concerns",
+            "allergies",
+            "food_preferences",
+            "decomposed_tasks",
+            "pending_requests",
+        }:
             dialog_state[key] = list(value or [])
             continue
         if key == "pet_profile":

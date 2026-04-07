@@ -29,6 +29,70 @@ HEALTH_CONCERN_MAP = {
     "면역": ["체력", "활력", "항산화", "면역력"],
 }
 
+# ── 서브카테고리 동의어 매핑 사전 ──────────────────────────────────────────
+SUBCATEGORY_SYNONYMS = {
+    "껌": "덴탈껌",
+    "정수기": "급식/급수기",
+    "물그릇": "급식/급수기",
+    "식기": "급식/급수기",
+    "밥그릇": "급식/급수기",
+    "츄르": "져키/스틱",
+    "스크래쳐": "스크래쳐/캣타워",
+    "캣타워": "스크래쳐/캣타워",
+    "이동장": "이동장/캐리어",
+    "캐리어": "이동장/캐리어",
+    "하우스": "하우스/방석",
+    "방석": "하우스/방석",
+    "패드": "배변패드",
+    "모래": "벤토나이트",
+}
+
+
+def _resolve_category_subcategory(
+    *,
+    text_to_search: str,
+    category: str | None,
+    subcategory: str | None,
+    pet_type_kr: str,
+) -> tuple[str | None, str | None]:
+    """
+    동의어 매핑 및 계층 구조를 바탕으로 카테고리와 서브카테고리를 보정합니다.
+    """
+    pet_category_map = CATEGORIES.get(pet_type_kr or "강아지", {})
+    combined_text = f"{category or ''} {subcategory or ''} {text_to_search}".strip()
+    
+    # 1. 동의어 보정
+    for alias, canonical in SUBCATEGORY_SYNONYMS.items():
+        if alias in combined_text:
+            subcategory = canonical
+            break
+
+    # 2. 키워드 매칭 (표준 명칭이 아닐 때만)
+    standard_names = []
+    for cat_info in pet_category_map.values():
+        standard_names.extend(cat_info.get("subcategories", []))
+        
+    if subcategory not in standard_names:
+        found_sub, found_cat = None, None
+        for cat_name, cat_info in pet_category_map.items():
+            for sub in cat_info.get("subcategories", []):
+                keywords = [k.strip() for k in sub.replace("(", "/").replace(")", "/").split("/") if k.strip()]
+                if any(k in combined_text and len(k) > 1 for k in keywords):
+                    found_sub, found_cat = sub, cat_name
+                    break
+            if found_sub: break
+        if found_sub:
+            subcategory, category = found_sub, found_cat
+
+    # 3. 부모 카테고리 역추론
+    if subcategory:
+        for cat_name, cat_info in pet_category_map.items():
+            if subcategory in cat_info.get("subcategories", []):
+                category = cat_name
+                break
+                
+    return category, subcategory
+
 
 def _build_context(
     *,
@@ -82,83 +146,149 @@ def _classify_user_input(user_input: str, context: str) -> dict:
 
 
 def classify_intent(state: ChatState) -> dict:
-    user_input = state["user_input"]
+    original_user_input = state["user_input"]
+    current_user_input = original_user_input
     user_id = state.get("user_id")
     prev_intents = state.get("intents") or []
     prev_filters = normalize_search_filters(state.get("filters"))
     prev_pet = state.get("pet_profile") or {}
     target_pet_id = state.get("target_pet_id")
     pending_requests = list(state.get("pending_requests") or [])
+    decomposed_tasks = list(state.get("decomposed_tasks") or [])
 
     user_pets = get_user_pets(user_id) if user_id else []
+    
+    # 1. 초기 분류
     context = _build_context(
         state=state,
-        user_input=user_input,
+        user_input=current_user_input,
         user_pets=user_pets,
         prev_intents=prev_intents,
         prev_filters=prev_filters,
         prev_pet=prev_pet,
         target_pet_id=target_pet_id,
     )
-    result = _classify_user_input(user_input, context)
+    result = _classify_user_input(current_user_input, context)
+    
+    is_next_request = result.get("is_next_request", False)
+
+    # 2. 후속 요청 처리 (Sequential Processing)
+    if is_next_request and decomposed_tasks:
+        next_task = decomposed_tasks.pop(0)
+        pet_name = next_task.get("pet_name") or ""
+        category = next_task.get("category") or ""
+        subcategory = next_task.get("subcategory") or ""
+        health = next_task.get("health_concern") or ""
+        age = next_task.get("age") or ""
+        
+        # [개선] LLM 재호출 대신 큐의 데이터를 직접 결과에 매핑하여 정확도 보장
+        logger.info("Processing queued task: %s", next_task)
+        result = {
+            "intents": ["recommend"],
+            "mentioned_pet_names": [pet_name] if pet_name else [],
+            "target_categories": [category] if category else [],
+            "subcategory": subcategory,
+            "health_concerns": [health] if health else [],
+            "age": age,
+            "is_next_request": False,
+            "is_synthetic": True # 합성된 데이터임을 표시
+        }
+        current_user_input = f"{pet_name} {health} {subcategory} {category} 추천".strip()
 
     new_intents = result.get("intents") or []
     mentioned_names = result.get("mentioned_pet_names") or []
     exclude_ingredients = result.get("exclude_ingredients") or []
     raw_health_concerns = result.get("health_concerns") or []
-    is_next_request = result.get("is_next_request", False)
     target_categories = result.get("target_categories") or []
     is_explicit_pet_info = bool(result.get("pet_type") or result.get("breed"))
+    new_decomposed_tasks = result.get("decomposed_tasks") or []
 
-    # 건강 고민 표준 태그로 변환 로직
-    detected_health_concerns = []
-    for raw in raw_health_concerns:
-        mapped_tag = raw
-        for tag, keywords in HEALTH_CONCERN_MAP.items():
-            if any(keyword in raw for keyword in keywords) or raw == tag:
-                mapped_tag = tag
-                break
-        detected_health_concerns.append(mapped_tag)
+    if new_decomposed_tasks:
+        logger.info("─── Query Decomposition Detected ───")
+        for i, task in enumerate(new_decomposed_tasks):
+            logger.info(
+                "Task [%d]: pet_name=%s, category=%s, subcategory=%s, health_concern=%s",
+                i + 1,
+                task.get("pet_name", "N/A"),
+                task.get("category", "N/A"),
+                task.get("subcategory", "N/A"),
+                task.get("health_concern", "N/A"),
+            )
+        logger.info("───────────────────────────────────")
+
+    # ── [중요] Decomposition 맥락 방어 로직 ──
+    # 질문 원문(original_user_input)에 펫 이름이 2개 이상 직접 언급되지 않았다면, 
+    # 과거 이력 때문에 질문을 쪼개는 것을 방지합니다.
+    # 단, 합성된 입력(is_synthetic)에 대해서는 이 로직을 건너뜁니다.
+    if not result.get("is_synthetic"):
+        actual_mentions_in_input = [pet["name"] for pet in user_pets if pet["name"] in original_user_input]
+        if len(new_decomposed_tasks) > 1 and len(actual_mentions_in_input) < 2:
+            logger.info("Preventing excessive decomposition triggered by history context.")
+            new_decomposed_tasks = [] # 쪼개지 않고 현재 입력 전체를 하나로 처리
+
+    def map_health_concerns(concerns):
+        detected = []
+        for raw in concerns:
+            mapped_tag = raw
+            for tag, keywords in HEALTH_CONCERN_MAP.items():
+                if any(keyword in raw for keyword in keywords) or raw == tag:
+                    mapped_tag = tag
+                    break
+            detected.append(mapped_tag)
+        return detected
+
+    detected_health_concerns = map_health_concerns(raw_health_concerns)
 
     is_pet_switched = False
     switched_pet_name = None
     overridden_metadata = {}
-    _pending_form_hint = None  # pending entry에 저장된 form_hint 복원용 (다중 펫 시나리오)
+    
+    # 펫 타입 결정
+    temp_pet = dict(prev_pet)
+    if is_explicit_pet_info and not target_pet_id:
+        if result.get("pet_type"):
+            temp_pet["species"] = "dog" if result["pet_type"] == "강아지" else "cat"
+    pet_type_kr = "고양이" if (temp_pet.get("species") == "cat" or result.get("pet_type") == "고양이") else "강아지"
 
-    if is_next_request:
-        if pending_requests:
-            next_req = pending_requests.pop(0)
-            next_pet_id = next_req.get("pet_id")
-            next_category = next_req.get("category")
+    # ── [중요] decomposed_tasks 개별 보정 로직 ──
+    if new_decomposed_tasks and "recommend" in new_intents:
+        for task in new_decomposed_tasks:
+            task_text = f"{task.get('category', '')} {task.get('subcategory', '')}".strip()
+            t_cat, t_sub = _resolve_category_subcategory(
+                text_to_search=task_text, 
+                category=task.get("category"),
+                subcategory=task.get("subcategory"),
+                pet_type_kr=pet_type_kr
+            )
+            task["category"] = t_cat
+            task["subcategory"] = t_sub
 
-            # 펫 전환이 필요한 경우
-            if next_pet_id:
-                full_profile = get_pet_full_profile(next_pet_id)
-                if full_profile:
-                    target_pet_id = next_pet_id
-                    prev_pet = full_profile["pet_profile"]
-                    overridden_metadata = {
-                        "health_concerns": full_profile["health_concerns"],
-                        "allergies": full_profile["allergies"],
-                        "food_preferences": full_profile["food_preferences"],
-                    }
-                    is_pet_switched = True
-                    switched_pet_name = prev_pet.get("name")
+    # 4. Query Decomposition 처리
+    if new_decomposed_tasks and not is_next_request:
+        # [수정] 여러 작업이 감지되면, 현재 턴에서는 첫 번째 작업만 수행하고
+        # 나머지는 모두 decomposed_tasks 큐에 쌓습니다.
+        # 이렇게 함으로써 응답 노드에서 "다음 상품도 보여드릴까요?" 질문이 나가게 됩니다.
+        first_task = new_decomposed_tasks[0]
+        # 첫 번째 작업을 제외한 나머지를 큐에 저장 (기존에는 1:부터였으므로 동일하지만 의미 명확화)
+        decomposed_tasks.extend(new_decomposed_tasks[1:]) 
+        
+        logger.info("Multi-task detected. Processing first task and queuing %d tasks.", len(new_decomposed_tasks) - 1)
 
-            # 카테고리 설정 (펫 전환과 무관하게 적용)
-            if next_category:
-                target_categories = [next_category]
+        if first_task.get("pet_name"):
+            mentioned_names = [first_task["pet_name"]]
+        if first_task.get("category"):
+            target_categories = [first_task["category"]]
+        if first_task.get("subcategory"):
+            result["subcategory"] = first_task["subcategory"]
+        if first_task.get("health_concern"):
+            detected_health_concerns = map_health_concerns([first_task["health_concern"]])
+        if first_task.get("age"):
+            result["age"] = first_task["age"]
+        
+        new_intents = ["recommend"]
 
-            new_intents = ["recommend"]
-
-            # pending entry에 저장된 form_hint를 현재 처리에 복원
-            # (이전 턴에 다중 펫 처리 시 pending에 저장해뒀던 form_hint)
-            _pending_form_hint = next_req.get("form_hint")
-        else:
-            _pending_form_hint = None
-    elif mentioned_names:
-        # ★ 핵심 수정: DB 등록 순서가 아닌 사용자 입력 순서(mentioned_names)로 정렬
-        # 예: "초코 사료랑 바나나 모래" → mentioned_names=["초코","바나나"] 순서 보장
+    # 5. 펫 매칭 및 전환 로직
+    if mentioned_names:
         raw_matched = [pet for pet in user_pets if pet["name"] in mentioned_names]
         matched_pets = sorted(
             raw_matched,
@@ -167,7 +297,6 @@ def classify_intent(state: ChatState) -> dict:
         if matched_pets:
             first_pet = matched_pets[0]
             if str(first_pet["pet_id"]) != str(target_pet_id):
-                # 현재 펫과 다를 경우 → 프로필 전환
                 full_profile = get_pet_full_profile(str(first_pet["pet_id"]))
                 if full_profile:
                     target_pet_id = str(first_pet["pet_id"])
@@ -183,41 +312,24 @@ def classify_intent(state: ChatState) -> dict:
                     switched_pet_name = prev_pet.get("name")
                     if "recommend" not in new_intents:
                         new_intents.append("recommend")
+
+            if not new_decomposed_tasks:
+                remaining_categories = list(target_categories[1:]) if len(target_categories) > 1 else []
+                for i, pet in enumerate(matched_pets[1:]):
+                    pet_id = str(pet["pet_id"])
+                    pending_cat = remaining_categories[i] if i < len(remaining_categories) else None
+                    pending_entry = {"pet_id": pet_id, "category": pending_cat}
+                    if not any(r.get("pet_id") == pet_id for r in pending_requests):
+                        pending_requests.append(pending_entry)
+                multi_pet_categories_registered = len(matched_pets) > 1 and bool(remaining_categories)
             else:
-                # 현재 펫과 동일(초코가 이미 선택된 상태) → 프로필 전환 없이 카테고리만 처리
-                logger.info("first mentioned pet is already the current pet: %s", first_pet.get("name"))
-
-            # 두 번째 이후 펫+카테고리를 통합 큐에 쌍으로 등록
-            # target_categories[0] = 첫 번째 펫 카테고리, target_categories[1:] = 나머지 펫 카테고리
-            remaining_categories = list(target_categories[1:]) if len(target_categories) > 1 else []
-            for i, pet in enumerate(matched_pets[1:]):
-                pet_id = str(pet["pet_id"])
-                pending_cat = remaining_categories[i] if i < len(remaining_categories) else None
-                pending_entry = {"pet_id": pet_id, "category": pending_cat}
-                # 이미 동일한 pet_id가 큐에 없을 때만 추가
-                if not any(r.get("pet_id") == pet_id for r in pending_requests):
-                    pending_requests.append(pending_entry)
-            # 다중 펫+카테고리가 이미 쌍으로 등록됐음을 표시 → 아래 단일 펫 카테고리 로직 중복 방지
-            multi_pet_categories_registered = len(matched_pets) > 1 and bool(remaining_categories)
+                multi_pet_categories_registered = True
     elif is_explicit_pet_info:
+        # 이름 언급은 없지만 종/품종 정보가 명시된 경우
         multi_pet_categories_registered = False
-        new_species = None
-        if result.get("pet_type") == "강아지":
-            new_species = "dog"
-        elif result.get("pet_type") == "고양이":
-            new_species = "cat"
-
         new_breed = result.get("breed")
-        current_species = prev_pet.get("species")
         current_breed = prev_pet.get("breed")
-
-        is_contradictory = False
-        if new_species and current_species and new_species != current_species:
-            is_contradictory = True
-        if new_breed and current_breed and new_breed != current_breed:
-            is_contradictory = True
-
-        if is_contradictory or (new_breed and not target_pet_id):
+        if (new_breed and current_breed and new_breed != current_breed) or (new_breed and not target_pet_id):
             target_pet_id = None
             prev_pet = {}
             overridden_metadata = {
@@ -227,17 +339,13 @@ def classify_intent(state: ChatState) -> dict:
                 "breed_context": "",
                 "health_traits": "",
             }
-            logger.info("switching to general breed context=%s", new_breed or new_species)
             is_pet_switched = True
-        else:
-            logger.info("pet context matched current profile=%s", prev_pet.get("name"))
 
     if not new_intents:
         if "recommend" in prev_intents:
             new_intents = ["recommend"]
         else:
             new_intents = ["unclear"]
-
     else:
         multi_pet_categories_registered = False
 
@@ -256,103 +364,46 @@ def classify_intent(state: ChatState) -> dict:
     new_filters: SearchFilters = {}
     is_major_switch = is_pet_switched or target_categories
 
-    species = new_pet.get("species")
-    if species:
-        new_filters["pet_type"] = "강아지" if species == "dog" else "고양이"
+    if new_pet.get("species"):
+        new_filters["pet_type"] = "강아지" if new_pet["species"] == "dog" else "고양이"
     elif result.get("pet_type"):
         new_filters["pet_type"] = result["pet_type"]
     elif prev_filters.get("pet_type"):
         new_filters["pet_type"] = prev_filters["pet_type"]
 
-    current_pet_kr = new_filters.get("pet_type") or "강아지"
-    pet_category_map = CATEGORIES.get(current_pet_kr, {})
+    # 6. 메인 분석 결과 보정
+    detected_cat = target_categories[0] if target_categories else None
+    detected_sub = normalize_filter_value(result.get("subcategory"))
 
-    detected_category = None
-    if target_categories:
-        detected_category = target_categories[0]
-        # 남은 카테고리(2번째~)는 다중 펫 처리가 안 된 경우에만 현재 펫 유지 상태로 큐에 등록
-        # 다중 펫 처리(초코+사료, 바나나+모래)를 이미 한 경우엔 건너뜀 → 중복 방지
-        if len(target_categories) > 1 and not multi_pet_categories_registered:
+    if "recommend" in new_intents:
+        detected_cat, detected_sub = _resolve_category_subcategory(
+            text_to_search=current_user_input,
+            category=detected_cat,
+            subcategory=detected_sub,
+            pet_type_kr=pet_type_kr
+        )
+
+    # 필터 적용
+    if detected_cat:
+        new_filters["category"] = detected_cat
+        if target_categories and len(target_categories) > 1 and not multi_pet_categories_registered:
             for category in target_categories[1:]:
                 pending_requests.append({"pet_id": None, "category": category})
     elif "recommend" in new_intents and not is_major_switch:
-        detected_category = prev_filters.get("category")
+        new_filters["category"] = prev_filters.get("category")
 
-    detected_subcategory = normalize_filter_value(result.get("subcategory"))
-    if not detected_subcategory and "recommend" in new_intents and not is_major_switch:
-        if detected_category == prev_filters.get("category"):
-            detected_subcategory = prev_filters.get("subcategory")
-
-    if not detected_subcategory and "recommend" in new_intents:
-        found_subcategory = None
-        found_category = None
-        targets = [detected_category] if detected_category else pet_category_map.keys()
-        for category_name in targets:
-            subcategories = pet_category_map.get(category_name, {}).get("subcategories", [])
-            for subcategory in subcategories:
-                keywords = subcategory.split("/") if "/" in subcategory else [subcategory]
-                if any(keyword in user_input and len(keyword) > 1 for keyword in keywords):
-                    found_subcategory = subcategory
-                    found_category = category_name
-                    break
-            if found_subcategory:
-                break
-        if found_subcategory:
-            detected_subcategory = found_subcategory
-            detected_category = found_category
-            if detected_category != prev_filters.get("category"):
-                detected_subcategory = found_subcategory
-
-    if detected_category:
-        new_filters["category"] = detected_category
-    if detected_subcategory:
-        new_filters["subcategory"] = detected_subcategory
-
-    form_to_subcategory = {
-        ("고양이", "캔", "사료"): "주식캔",
-        ("고양이", "캔", "간식"): "간식캔",
-        ("고양이", "파우치", "사료"): "주식파우치",
-        ("고양이", "파우치", "간식"): "간식파우치",
-        ("강아지", "캔", "간식"): "캔/파우치",
-    }
-    previous_form_hint = None if is_major_switch else state.get("form_hint")
-    llm_form_hint = result.get("form_hint")
-    # 다중 펫 시나리오: user_input 전체에서 form 탐지하되, is_next_request면 pending entry에서 복원
-    if is_next_request:
-        detected_form = _pending_form_hint  # pending entry에 저장된 form_hint 사용
-    else:
-        detected_form = next((keyword for keyword in ("캔", "파우치") if keyword in user_input), None)
-    final_form_hint = detected_form or llm_form_hint or previous_form_hint
-
-    form_hint = None
-    if final_form_hint and current_pet_kr:
-        category = new_filters.get("category")
-        subcategory = form_to_subcategory.get((current_pet_kr, final_form_hint, category))
-        if subcategory:
-            new_filters["subcategory"] = subcategory
-            form_hint = None
-        else:
-            form_hint = final_form_hint
-
-    # ★ 다중 펫 시나리오: form_hint가 현재 펫이 아닌 pending 펫에 해당할 경우
-    # → pending entry에 form_hint를 저장하고 현재 state에서 제거 (clarify 방지)
-    if form_hint and pending_requests and not is_next_request:
-        for entry in pending_requests:
-            if entry.get("form_hint") is None:
-                entry["form_hint"] = form_hint
-                logger.info(
-                    "form_hint '%s' moved to pending entry pet_id=%s",
-                    form_hint, entry.get("pet_id"),
-                )
-                break
-        form_hint = None  # 현재 state에서 제거 → route_intent가 clarify로 빠지지 않음
+    if detected_sub:
+        new_filters["subcategory"] = detected_sub
+    elif "recommend" in new_intents and not is_major_switch:
+        if new_filters.get("category") == prev_filters.get("category"):
+            new_filters["subcategory"] = prev_filters.get("subcategory")
 
     if "popularity" in new_intents and "subcategory" in new_filters:
         del new_filters["subcategory"]
 
     logger.info(
-        "intent classified input=%s intents=%s pet=%s filters=%s",
-        user_input,
+        "intent classified input=%s intents=%s pet=%s filters=%s decomposed_count=%s",
+        current_user_input,
         new_intents,
         new_pet.get("name", new_pet.get("breed", "Unknown")),
         build_search_filters(
@@ -360,6 +411,7 @@ def classify_intent(state: ChatState) -> dict:
             category=new_filters.get("category"),
             subcategory=new_filters.get("subcategory"),
         ),
+        len(decomposed_tasks)
     )
 
     combined_allergies = list(
@@ -373,6 +425,8 @@ def classify_intent(state: ChatState) -> dict:
         "intents": new_intents,
         "target_pet_id": target_pet_id,
         "pending_requests": pending_requests,
+        "decomposed_tasks": decomposed_tasks,
+        "new_decomposed_tasks": new_decomposed_tasks,
         "is_pet_switched": is_pet_switched,
         "switched_pet_name": switched_pet_name,
         "domain_intent": result.get("domain_intent") or state.get("domain_intent"),
@@ -386,7 +440,6 @@ def classify_intent(state: ChatState) -> dict:
         "pet_profile": new_pet,
         "is_pet_override": is_explicit_pet_info or is_pet_switched,
         "pet_mismatch": False if is_pet_switched else state.get("pet_mismatch", False),
-        "form_hint": form_hint,
         "filter_relaxation_count": 0 if target_categories else state.get("filter_relaxation_count", 0),
         "allergies": combined_allergies,
         "health_concerns": combined_health_concerns,

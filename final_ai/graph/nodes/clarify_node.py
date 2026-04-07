@@ -37,10 +37,6 @@ def clarify_node(state: ChatState) -> dict:
             question = "인기 있는 상품을 찾으시는군요! 어떤 반려동물(강아지/고양이)을 위한 상품인가요?"
         else:
             question = "어떤 반려동물을 키우고 계세요? 강아지인가요, 고양이인가요?"
-    elif "recommend" in intents and state.get("form_hint"):
-        form = state["form_hint"]
-        pet_text = f"{current_pet_type}용" if current_pet_type else "반려동물용"
-        question = f"{form} 상품을 찾으시는군요! {pet_text} 주식(사료)을 찾으시나요, 아니면 간식을 찾으시나요?"
     elif "recommend" in intents and not category:
         pop_str = " 인기 상품" if "popularity" in intents else ""
         pet_text = f"{current_pet_type}를 위한" if current_pet_type else "반려동물을 위한"
