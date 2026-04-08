@@ -78,19 +78,25 @@ def build_profile_state(state: ChatState) -> dict:
     if user_id:
         try:
             if target_pet_id:
+                # 사용자가 특정 펫을 선택한 경우에만 미스매치 검증을 수행함
                 pet_row = fetch_pet_for_user(user_id, target_pet_id=target_pet_id, auto_latest=True)
             elif is_pet_override:
                 pet_row = None
                 logger.info("explicit pet override detected; skipping db auto-load")
             else:
-                pet_row = fetch_pet_for_user(user_id, auto_latest=True)
+                # [수정] 펫을 선택하지 않은 경우(선택안함), DB에서 자동으로 가져오는 것을 중단함
+                # 사용자가 "사료 추천" -> "강아지"라고 답했을 때, DB의 "고양이"가 덮어씌워지는 것을 방지
+                pet_row = None
+                logger.info("No pet selected (target_pet_id is None); skipping auto-load to respect user choice")
 
             if pet_row:
                 db_species = normalize_pet_species(pet_row["species"])
                 chat_species = normalize_pet_species(target_species)
                 db_breed = pet_row["breed"]
 
-                if not state.get("is_pet_switched", False):
+                # [수정] target_pet_id가 있을 때만 엄격하게 미스매치를 체크함
+                # target_pet_id가 없으면 사용자가 입력 기반 검색을 원한다고 가정함
+                if target_pet_id and not state.get("is_pet_switched", False):
                     if chat_species and db_species != chat_species:
                         pet_mismatch = True
                     if target_breed and db_breed != target_breed:
@@ -123,6 +129,11 @@ def build_profile_state(state: ChatState) -> dict:
             logger.warning("profile db lookup failed: %s", exc)
 
     age_group = _determine_age_group(target_age, target_species)
+    
+    # [수정] 펫을 선택하지 않았거나, popularity 인텐트가 있는 경우 미스매치 무시
+    intents = state.get("intents") or []
+    if not target_pet_id or "popularity" in intents:
+        pet_mismatch = False
 
     logger.info("profile built user=%s pet=%s breed=%s", user_id, pet_profile.get("name"), pet_profile.get("breed"))
     return {

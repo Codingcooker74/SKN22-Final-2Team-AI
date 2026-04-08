@@ -38,7 +38,7 @@ def route_intent(state: ChatState):
         return "clarify"
 
     has_domain = "domain_qa" in intents
-    has_recommend = "recommend" in intents
+    has_recommend = "recommend" in intents or "popularity" in intents
 
     if has_recommend:
         if not filters.get("pet_type") and not pet_profile.get("species"):
@@ -47,10 +47,18 @@ def route_intent(state: ChatState):
             return "clarify"
 
     if has_domain and has_recommend:
-        return [Send("general", state), Send("profile", state)]
+        # [수정] 복합 의도인 경우에도 펫 미선택 시 profile 노드를 건너뛰도록 분기 처리
+        rec_node = "profile" if state.get("target_pet_id") else "query"
+        return [Send("general", state), Send(rec_node, state)]
     if has_domain:
+        # [수정] 건강 상담(domain_qa)만 있는 경우에도 펫 정보가 있다면 profile 노드를 거쳐 정보를 동기화함
+        if state.get("target_pet_id") or state.get("is_pet_switched"):
+            return [Send("general", state), Send("profile", state)]
         return "general"
     if has_recommend:
+        # [수정] 특정 펫을 선택하지 않은 경우(target_pet_id가 없는 경우) profile 노드를 건너뜀
+        if not state.get("target_pet_id"):
+            return "query"
         return "profile"
     return "clarify"
 
@@ -89,6 +97,7 @@ def build_graph(checkpointer=None):
             "clarify": "clarify",
             "general": "general",
             "profile": "profile",
+            "query": "query", # [추가] query 경로 명시
         },
     )
 

@@ -25,11 +25,12 @@ INTENT_SYSTEM = f"""
 
 ### 펫 정보 추출 (pet_profile)
 - pet_type: 강아지 / 고양이 / null
-- breed: 품종명 / null
+- **강아지, 고양이는 breed로 분류될 수 없음**
+- breed: 품종명 / null 
 - health_concerns: ["다이어트", "눈물", "관절" 등]
 - exclude_ingredients: ["소고기 없는" 등]
 - mentioned_pet_names: 언급된 반려동물 이름 리스트 / []
-- is_next_request: 사용자가 "ㅇㅇ", "다음 것도 보여줘", "응 보여줘", "다른 카테고리는?" 등 대기 중인 다른 펫이나 다음 카테고리의 추천을 요청하는 긍정 답변인 경우 true / false (기본값: false)
+- is_next_request: 사용자가 "ㅇㅇ", "엉", "다음 것도 보여줘", "응 보여줘", "다른 카테고리는?" 등 대기 중인 다른 펫이나 다음 카테고리의 추천을 요청하는 긍정 답변인 경우 true / false (기본값: false)
 
 ### Query Decomposition (복합 질문 분해 - 매우 중요)
 사용자가 여러 마리의 펫이나 여러 상품군을 복합적으로 요청한 경우, 이를 **순서대로 빠짐없이** 독립된 작업 리스트(`decomposed_tasks`)로 분해하세요.
@@ -58,9 +59,6 @@ INTENT_SYSTEM = f"""
 
 ### 카테고리 (표준 명칭 가이드)
 {json.dumps(CATEGORIES_FOR_LLM, ensure_ascii=False)}
-
-출력: JSON only (target_categories 필수)
-
 
 출력: JSON only (target_categories 리스트 필수)
 """

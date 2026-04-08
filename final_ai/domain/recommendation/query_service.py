@@ -65,9 +65,13 @@ def build_search_query_state(state: ChatState) -> dict:
             query_parts.append(concern)
             
     # 연령대 정보 추가
-    if age_group:
-        if age_group not in query_parts:
-            query_parts.append(age_group)
+    # [수정] 규칙 적용:
+    # 1. 카테고리가 '사료'인 경우: '키튼', '퍼피'만 검색어에 포함
+    # 2. 그 외 카테고리: 연령대 정보 미포함
+    if category_hint == "사료":
+        if age_group in ["키튼", "퍼피"]:
+            if age_group not in query_parts:
+                query_parts.append(age_group)
 
     # 3. 최종 검색어 조합
     if not query_parts:

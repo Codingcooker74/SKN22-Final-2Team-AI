@@ -184,6 +184,10 @@ def classify_intent(state: ChatState) -> dict:
 
     new_intents = result.get("intents") or []
     mentioned_names = result.get("mentioned_pet_names") or []
+    
+    # [추가] AI 질문(강아지/고양이?) 내의 단어가 이름으로 오인되는 것 방지
+    mentioned_names = [name for name in mentioned_names if name.strip() not in ["강아지", "고양이", "dog", "cat"]]
+    
     exclude_ingredients = result.get("exclude_ingredients") or []
     raw_health_concerns = result.get("health_concerns") or []
     target_categories = result.get("target_categories") or []
@@ -204,13 +208,22 @@ def classify_intent(state: ChatState) -> dict:
         logger.info("───────────────────────────────────")
 
     # ── [중요] Decomposition 맥락 방어 로직 ──
-    # 질문 원문(original_user_input)에 펫 이름이 2개 이상 직접 언급되지 않았다면, 
-    # 과거 이력 때문에 질문을 쪼개는 것을 방지합니다.
+    # 질문 원문(original_user_input)에 펫 이름이 2개 이상 직접 언급되거나, 
+    # 혹은 카테고리가 2개 이상 직접 언급되지 않았다면 과거 이력에 의한 과잉 분해로 간주하고 차단합니다.
     # 단, 합성된 입력(is_synthetic)에 대해서는 이 로직을 건너뜁니다.
     if not result.get("is_synthetic"):
         actual_mentions_in_input = [pet["name"] for pet in user_pets if pet["name"] in original_user_input]
-        if len(new_decomposed_tasks) > 1 and len(actual_mentions_in_input) < 2:
-            logger.info("Preventing excessive decomposition triggered by history context.")
+        
+        # 카테고리 키워드 추출 (사료, 간식, 모래 등)
+        all_cat_keywords = []
+        for p_type in CATEGORIES.values():
+            all_cat_keywords.extend(p_type.keys())
+        actual_categories_in_input = [cat for cat in set(all_cat_keywords) if cat in original_user_input]
+        
+        # 펫 이름도 1개고 카테고리 언급도 1개 이하라면 (즉, 질문에 복합 요소가 없다면) 분해 취소
+        if len(new_decomposed_tasks) > 1 and len(actual_mentions_in_input) < 2 and len(actual_categories_in_input) < 2:
+            logger.info("Preventing excessive decomposition triggered by history context. (mentions: pets=%d, cats=%d)", 
+                        len(actual_mentions_in_input), len(actual_categories_in_input))
             new_decomposed_tasks = [] # 쪼개지 않고 현재 입력 전체를 하나로 처리
 
     def map_health_concerns(concerns):
@@ -301,8 +314,7 @@ def classify_intent(state: ChatState) -> dict:
                     }
                     is_pet_switched = True
                     switched_pet_name = prev_pet.get("name")
-                    if "recommend" not in new_intents:
-                        new_intents.append("recommend")
+                    logger.info("Pet switched to '%s' by name mention.", switched_pet_name)
 
             if not new_decomposed_tasks:
                 remaining_categories = list(target_categories[1:]) if len(target_categories) > 1 else []
@@ -320,7 +332,9 @@ def classify_intent(state: ChatState) -> dict:
         multi_pet_categories_registered = False
         new_breed = result.get("breed")
         current_breed = prev_pet.get("breed")
-        if (new_breed and current_breed and new_breed != current_breed) or (new_breed and not target_pet_id):
+        
+        # [수정] 펫 미선택 시에는 품종이 들어와도 '전환' 플래그를 남발하지 않도록 조건 보강
+        if target_pet_id and new_breed and current_breed and new_breed != current_breed:
             target_pet_id = None
             prev_pet = {}
             overridden_metadata = {
@@ -331,6 +345,7 @@ def classify_intent(state: ChatState) -> dict:
                 "health_traits": "",
             }
             is_pet_switched = True
+            logger.info("Breed switch detected: %s", new_breed)
 
     if not new_intents:
         if "recommend" in prev_intents:
@@ -341,24 +356,30 @@ def classify_intent(state: ChatState) -> dict:
         multi_pet_categories_registered = False
 
     new_pet = dict(prev_pet)
-    if is_explicit_pet_info and not target_pet_id:
-        new_pet = {}
-        if result.get("pet_type"):
-            new_pet["species"] = "dog" if result["pet_type"] == "강아지" else "cat"
-        if result.get("breed"):
-            new_pet["breed"] = result["breed"]
-        if result.get("age"):
-            new_pet["age"] = result["age"]
+    # [수정] 펫 미선택 상태라면 기존 프로필(고양이 등)을 초기화하고 사용자의 새로운 입력(강아지 등)을 우선 적용
+    if not target_pet_id:
+        if is_explicit_pet_info or result.get("age"):
+            new_pet = {} # 펫 선택 안함 상태에서 새로운 정보가 들어오면 기존 프로필 오염 제거
+            if result.get("pet_type"):
+                new_pet["species"] = "dog" if result["pet_type"] == "강아지" else "cat"
+            if result.get("breed"):
+                new_pet["breed"] = result["breed"]
+            if result.get("age"):
+                new_pet["age"] = result["age"]
     elif result.get("age"):
         new_pet["age"] = result["age"]
 
     new_filters: SearchFilters = {}
     is_major_switch = is_pet_switched or target_categories
 
-    if new_pet.get("species"):
-        new_filters["pet_type"] = "강아지" if new_pet["species"] == "dog" else "고양이"
-    elif result.get("pet_type"):
+    # [중요] 펫 타입 필터 결정 우선순위 보정
+    # 1. 사용자의 현재 입력에서 감지된 펫 타입이 있으면 최우선 (이게 "고양이"로 튀는 것을 막아줍니다)
+    if result.get("pet_type"):
         new_filters["pet_type"] = result["pet_type"]
+    # 2. 입력에 없으면 프로필 정보를 따름
+    elif new_pet.get("species"):
+        new_filters["pet_type"] = "강아지" if new_pet["species"] == "dog" else "고양이"
+    # 3. 그것도 없으면 이전 필터 유지
     elif prev_filters.get("pet_type"):
         new_filters["pet_type"] = prev_filters["pet_type"]
 
