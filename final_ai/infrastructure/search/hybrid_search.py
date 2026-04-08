@@ -58,10 +58,18 @@ _TOKEN_SUFFIXES = (
 )
 
 
-def normalize_pet_species(species: str | None) -> str | None:
+def normalize_pet_species(species: str | list[str] | None) -> str | None:
     if not species:
         return None
-    return _PET_SPECIES_KR.get(str(species).strip())
+    
+    # 리스트인 경우 첫 번째 요소 사용
+    if isinstance(species, list):
+        if not species:
+            return None
+        species = species[0]
+        
+    val = str(species).strip().lower()
+    return _PET_SPECIES_KR.get(val) or _PET_SPECIES_KR.get(str(species).strip())
 
 
 def _extract_search_terms(query: str, *extra_terms: str | None) -> list[str]:
