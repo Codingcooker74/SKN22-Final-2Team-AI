@@ -27,10 +27,17 @@ INTENT_SYSTEM = f"""
 - pet_type: 강아지 / 고양이 / null
 - **강아지, 고양이는 breed로 분류될 수 없음**
 - breed: 품종명 / null 
+- brand: 사용자가 특정 브랜드를 명시했으면 브랜드명 / null
 - health_concerns: ["다이어트", "눈물", "관절" 등]
 - exclude_ingredients: ["소고기 없는" 등]
 - mentioned_pet_names: 언급된 반려동물 이름 리스트 / []
 - is_next_request: 사용자가 "ㅇㅇ", "엉", "다음 것도 보여줘", "응 보여줘", "다른 카테고리는?" 등 대기 중인 다른 펫이나 다음 카테고리의 추천을 요청하는 긍정 답변인 경우 true / false (기본값: false)
+- is_result_refinement: 사용자가 직전 추천 결과를 좁히거나 다시 고르는 후속 요청이면 true / false
+  - 예: "이 중에서", "그중에서", "방금 추천한 것 중", "추천해준 것 중"
+  - 가격/브랜드/성분/정렬 조건만 바꾸는 follow-up이면 true
+- refinement_sort: refinement 시 다시 정렬할 기준 / null
+  - 허용값: "price_low", "price_high", "popularity", "rating", "review_count", null
+  - 예: "더 싼 거" -> "price_low", "더 비싼 거" -> "price_high", "인기 많은 거" -> "popularity"
 
 ### Query Decomposition (복합 질문 분해 - 매우 중요)
 사용자가 여러 마리의 펫이나 여러 상품군을 복합적으로 요청한 경우, 이를 **순서대로 빠짐없이** 독립된 작업 리스트(`decomposed_tasks`)로 분해하세요.
@@ -56,6 +63,10 @@ INTENT_SYSTEM = f"""
    -> {{"intents":["recommend"],"is_next_request":true,"target_categories":[]}}
 4. 별칭 변환: "강아지 껌 추천해줘"
    -> {{"intents":["recommend"],"pet_type":"강아지","target_categories":["간식"],"subcategory":"덴탈껌"}}
+5. 이전 추천 refinement: "이 중에서 더 싼 거로 보여줘"
+   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"price_low"}}
+6. 이전 추천 refinement: "그중에서 인기 많은 거"
+   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"popularity"}}
 
 ### 카테고리 (표준 명칭 가이드)
 {json.dumps(CATEGORIES_FOR_LLM, ensure_ascii=False)}

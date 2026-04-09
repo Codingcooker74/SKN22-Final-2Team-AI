@@ -107,7 +107,9 @@ def hybrid_search_pg(
     category: str | list[str] | None = None,
     subcategory: str | list[str] | None = None,
     health_concerns: str | list[str] | None = None,
+    brand: str | None = None,
     budget: int | None = None,
+    allowed_goods_ids: list[str] | None = None,
 ) -> list[dict]:
     query_vec = embed_query(query)
     pet_type_kr = normalize_pet_species(pet_type) or pet_type
@@ -149,7 +151,9 @@ def hybrid_search_pg(
             category=category,
             subcategory=subcategory,
             health_concerns=health_concerns,
+            brand=brand,
             budget=budget,
+            allowed_goods_ids=allowed_goods_ids,
         )
         filter_parts.extend(f"AND {clause}" for clause in common_filters)
 

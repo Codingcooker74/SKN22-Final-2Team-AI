@@ -14,6 +14,7 @@ def build_search_query_state(state: ChatState) -> dict:
     filters = normalize_search_filters(state.get("filters"))
     relaxation = state.get("filter_relaxation_count", 0)
     pet_profile = state.get("pet_profile") or {}
+    brand = filters.get("brand") or ""
 
     # 1. 정보 수집 및 정규화
     # 종(species) 정보: filters에 없으면 프로필에서 가져옴
@@ -58,6 +59,8 @@ def build_search_query_state(state: ChatState) -> dict:
         query_parts.append(category_hint)
     if subcategory_hint and subcategory_hint != category_hint:
         query_parts.append(subcategory_hint)
+    if brand and brand not in query_parts:
+        query_parts.append(brand)
     
     # 건강 고민 키워드 추가
     for concern in concerns:
@@ -79,7 +82,20 @@ def build_search_query_state(state: ChatState) -> dict:
     else:
         search_query = " ".join(query_parts).strip()
 
-    logger.info("search query built (Deterministic) query=%r relaxation=%s", search_query, relaxation)
+    if state.get("is_result_refinement"):
+        refinement_query = (state.get("user_input") or "").strip()
+        if refinement_query:
+            if search_query:
+                search_query = f"{refinement_query} {search_query}".strip()
+            else:
+                search_query = refinement_query
+
+    logger.info(
+        "search query built (Deterministic) query=%r relaxation=%s refinement=%s",
+        search_query,
+        relaxation,
+        bool(state.get("is_result_refinement")),
+    )
     
     return {
         "search_query": search_query,
@@ -87,5 +103,6 @@ def build_search_query_state(state: ChatState) -> dict:
             pet_type=pet_type,
             category=category_hint,
             subcategory=subcategory_hint,
+            brand=brand,
         ),
     }

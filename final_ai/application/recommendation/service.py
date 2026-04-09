@@ -56,6 +56,7 @@ def recommend_products(
     age: str | None = None,
     category: str | None = None,
     subcategory: str | None = None,
+    brand: str | None = None,
     health_concerns: list[str] | None = None,
     allergies: list[str] | None = None,
     food_preferences: list[str] | None = None,
@@ -88,6 +89,7 @@ def recommend_products(
             pet_type=pet_type,
             category=category,
             subcategory=subcategory,
+            brand=brand,
         ),
         "budget": budget,
         "intents": ["recommend"],
@@ -142,6 +144,7 @@ def list_products(
             pet_type=normalized_pet_type,
             category=category,
             subcategory=subcategory,
+            brand=brand,
             budget=budget,
         )
         products = [serialize_product_summary(row) for row in rows]

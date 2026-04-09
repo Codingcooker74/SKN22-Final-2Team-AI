@@ -3,13 +3,14 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-FilterKey = Literal["pet_type", "category", "subcategory"]
+FilterKey = Literal["pet_type", "category", "subcategory", "brand"]
 
 
 class SearchFilters(TypedDict, total=False):
     pet_type: str
     category: str
     subcategory: str
+    brand: str
 
 
 def normalize_filter_value(value: object) -> str | None:
@@ -39,12 +40,14 @@ def build_search_filters(
     pet_type: object = None,
     category: object = None,
     subcategory: object = None,
+    brand: object = None,
 ) -> SearchFilters:
     filters: SearchFilters = {}
 
     normalized_pet_type = normalize_filter_value(pet_type)
     normalized_category = normalize_filter_value(category)
     normalized_subcategory = normalize_filter_value(subcategory)
+    normalized_brand = normalize_filter_value(brand)
 
     if normalized_pet_type:
         filters["pet_type"] = normalized_pet_type
@@ -52,6 +55,8 @@ def build_search_filters(
         filters["category"] = normalized_category
     if normalized_subcategory:
         filters["subcategory"] = normalized_subcategory
+    if normalized_brand:
+        filters["brand"] = normalized_brand
 
     return filters
 
@@ -64,6 +69,7 @@ def normalize_search_filters(filters: Mapping[str, object] | None) -> SearchFilt
         pet_type=filters.get("pet_type"),
         category=filters.get("category"),
         subcategory=filters.get("subcategory"),
+        brand=filters.get("brand"),
     )
 
 

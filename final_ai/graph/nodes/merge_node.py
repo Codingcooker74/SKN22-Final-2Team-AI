@@ -22,5 +22,13 @@ def merge_node(state: ChatState) -> dict:
     logger.info("merge mode=%s contexts=%s products=%s", mode, len(domain_contexts), len(reranked_results))
 
     product_cards = [serialize_product_card(product) for product in reranked_results]
+    last_recommended_goods_ids = [
+        str(card.get("goods_id"))
+        for card in product_cards
+        if card.get("goods_id") is not None
+    ]
 
-    return {"product_cards": product_cards}
+    return {
+        "product_cards": product_cards,
+        "last_recommended_goods_ids": last_recommended_goods_ids or list(state.get("last_recommended_goods_ids") or []),
+    }

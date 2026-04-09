@@ -16,6 +16,8 @@ class ChatState(TypedDict):
 
     user_id: str | None
     target_pet_id: str | None
+    last_recommended_goods_ids: list[str]
+    allowed_goods_ids: list[str]
     # 분해된 하위 작업 리스트 (Query Decomposition 결과물)
     # 형식: [{"pet_name": "초코", "category": "사료", "health_concern": "체중", "age": "노령"}, ...]
     decomposed_tasks: list[dict]
@@ -24,6 +26,7 @@ class ChatState(TypedDict):
     # pet_id가 None이면 현재 펫 유지
     pending_requests: list[dict]
     is_pet_switched: bool
+    is_result_refinement: bool
 
     switched_pet_name: str | None
     pet_profile: dict | None
@@ -40,6 +43,7 @@ class ChatState(TypedDict):
     pet_mismatch: bool
 
     age_group: str | None
+    refinement_sort: str | None
     search_query: str | None
     filters: SearchFilters
     breed_context: str | None
