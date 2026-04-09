@@ -38,7 +38,7 @@ env:
   FASTAPI_IMAGE_REPO: 027099020675.dkr.ecr.ap-northeast-2.amazonaws.com/test-tailtalk-fastapi
   FASTAPI_EB_APP_NAME: test-tailtalk-fastapi
   FASTAPI_EB_ENV_NAME: test-tailtalk-fastapi-env
-  FASTAPI_HEALTH_PATH: /health
+  FASTAPI_INTERNAL_TARGET_GROUP_NAME: tailtalk-fastapi-int-tg
 
 jobs:
   ci:
@@ -272,20 +272,69 @@ jobs:
           use_existing_version_if_available: true
           wait_for_deployment: true
 
-      - name: Resolve FastAPI environment URL
-        id: fastapi-env
+      - name: Resolve FastAPI environment resources
+        id: fastapi-resources
         run: |
-          cname="$(aws elasticbeanstalk describe-environments \
-            --application-name "$FASTAPI_EB_APP_NAME" \
-            --environment-names "$FASTAPI_EB_ENV_NAME" \
-            --query 'Environments[0].CNAME' \
+          asg_name="$(aws elasticbeanstalk describe-environment-resources \
+            --environment-name "$FASTAPI_EB_ENV_NAME" \
+            --query 'EnvironmentResources.AutoScalingGroups[0].Name' \
             --output text)"
-          echo "cname=$cname" >> "$GITHUB_OUTPUT"
+          instance_id="$(aws elasticbeanstalk describe-environment-resources \
+            --environment-name "$FASTAPI_EB_ENV_NAME" \
+            --query 'EnvironmentResources.Instances[0].Id' \
+            --output text)"
+          if [ -z "$asg_name" ] || [ "$asg_name" = "None" ]; then
+            echo "FastAPI Auto Scaling group not found for $FASTAPI_EB_ENV_NAME" >&2
+            exit 1
+          fi
+          if [ -z "$instance_id" ] || [ "$instance_id" = "None" ]; then
+            echo "FastAPI instance not found for $FASTAPI_EB_ENV_NAME" >&2
+            exit 1
+          fi
+          echo "asg_name=$asg_name" >> "$GITHUB_OUTPUT"
+          echo "instance_id=$instance_id" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test FastAPI health endpoint after deploy
+      - name: Resolve FastAPI internal target group
+        id: fastapi-int-tg
         run: |
-          curl --fail --silent --show-error \
-            --retry 12 \
-            --retry-delay 10 \
-            --retry-connrefused \
-            "http://${{ steps.fastapi-env.outputs.cname }}${{ env.FASTAPI_HEALTH_PATH }}"
+          target_group_arn="$(aws elbv2 describe-target-groups \
+            --names "$FASTAPI_INTERNAL_TARGET_GROUP_NAME" \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text)"
+          health_check_path="$(aws elbv2 describe-target-groups \
+            --target-group-arns "$target_group_arn" \
+            --query 'TargetGroups[0].HealthCheckPath' \
+            --output text)"
+          if [ -z "$target_group_arn" ] || [ "$target_group_arn" = "None" ]; then
+            echo "FastAPI internal target group not found: $FASTAPI_INTERNAL_TARGET_GROUP_NAME" >&2
+            exit 1
+          fi
+          echo "target_group_arn=$target_group_arn" >> "$GITHUB_OUTPUT"
+          echo "health_check_path=$health_check_path" >> "$GITHUB_OUTPUT"
+
+      - name: Reattach FastAPI internal target group
+        run: |
+          aws autoscaling attach-load-balancer-target-groups \
+            --auto-scaling-group-name "${{ steps.fastapi-resources.outputs.asg_name }}" \
+            --target-group-arns "${{ steps.fastapi-int-tg.outputs.target_group_arn }}"
+
+      - name: Wait for FastAPI internal health check
+        env:
+          FASTAPI_INSTANCE_ID: ${{ steps.fastapi-resources.outputs.instance_id }}
+          FASTAPI_TARGET_GROUP_ARN: ${{ steps.fastapi-int-tg.outputs.target_group_arn }}
+          FASTAPI_TARGET_HEALTH_PATH: ${{ steps.fastapi-int-tg.outputs.health_check_path }}
+        run: |
+          for attempt in $(seq 1 30); do
+            target_state="$(aws elbv2 describe-target-health \
+              --target-group-arn "$FASTAPI_TARGET_GROUP_ARN" \
+              --query "TargetHealthDescriptions[?Target.Id=='$FASTAPI_INSTANCE_ID'].TargetHealth.State | [0]" \
+              --output text)"
+            if [ "$target_state" = "healthy" ]; then
+              echo "FastAPI instance $FASTAPI_INSTANCE_ID is healthy on $FASTAPI_TARGET_HEALTH_PATH"
+              exit 0
+            fi
+            echo "Attempt $attempt/30: internal target state=${target_state:-missing}; waiting 10s."
+            sleep 10
+          done
+          aws elbv2 describe-target-health --target-group-arn "$FASTAPI_TARGET_GROUP_ARN"
+          exit 1
