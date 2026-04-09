@@ -36,11 +36,81 @@ def _get_base_product_name(full_name: str) -> str:
     return name
 
 
+def _effective_price(candidate: dict) -> float:
+    value = candidate.get("discount_price")
+    if value is None:
+        value = candidate.get("price")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _apply_refinement_sort(
+    scored: list[tuple[float, dict]],
+    *,
+    refinement_sort: str | None,
+) -> list[tuple[float, dict]]:
+    if not refinement_sort:
+        return scored
+
+    if refinement_sort == "price_low":
+        return sorted(
+            scored,
+            key=lambda item: (
+                _effective_price(item[1]),
+                -item[0],
+                str(item[1].get("goods_id") or ""),
+            ),
+        )
+    if refinement_sort == "price_high":
+        return sorted(
+            scored,
+            key=lambda item: (
+                -_effective_price(item[1]),
+                -item[0],
+                str(item[1].get("goods_id") or ""),
+            ),
+        )
+    if refinement_sort == "popularity":
+        return sorted(
+            scored,
+            key=lambda item: (
+                -(float(item[1].get("popularity_score") or 0.0)),
+                -(float(item[1].get("review_count") or 0.0)),
+                -item[0],
+                _effective_price(item[1]),
+            ),
+        )
+    if refinement_sort == "rating":
+        return sorted(
+            scored,
+            key=lambda item: (
+                -(float(item[1].get("rating") or 0.0)),
+                -(float(item[1].get("review_count") or 0.0)),
+                -item[0],
+                _effective_price(item[1]),
+            ),
+        )
+    if refinement_sort == "review_count":
+        return sorted(
+            scored,
+            key=lambda item: (
+                -(float(item[1].get("review_count") or 0.0)),
+                -(float(item[1].get("rating") or 0.0)),
+                -item[0],
+                _effective_price(item[1]),
+            ),
+        )
+    return scored
+
+
 def rerank_search_results(state: ChatState) -> dict:
     candidates = state.get("search_results") or []
     detected_aspect = state.get("detected_aspect")
     intents = state.get("intents") or []
     relaxation = state.get("filter_relaxation_count", 0)
+    refinement_sort = state.get("refinement_sort")
 
     if not candidates:
         should_retry = relaxation < 1
@@ -115,6 +185,8 @@ def rerank_search_results(state: ChatState) -> dict:
 
     # 점수 높은 순으로 정렬
     scored.sort(key=lambda item: item[0], reverse=True)
+    if state.get("is_result_refinement"):
+        scored = _apply_refinement_sort(scored, refinement_sort=refinement_sort)
     
     # 중복 상품군 필터링 (용량만 다른 상품 중 점수가 가장 높은 것 하나만 선택)
     unique_top = []
@@ -150,7 +222,14 @@ def rerank_search_results(state: ChatState) -> dict:
     should_retry = len(unique_top) < 3 and relaxation < 1
     new_relaxation = relaxation + 1 if should_retry else relaxation
     mode_str = "POPULARITY" if is_popularity_mode else "NORMAL"
-    logger.info("rerank mode=%s final=%s relaxation=%s", mode_str, len(unique_top), relaxation)
+    logger.info(
+        "rerank mode=%s final=%s relaxation=%s refinement=%s refinement_sort=%s",
+        mode_str,
+        len(unique_top),
+        relaxation,
+        bool(state.get("is_result_refinement")),
+        refinement_sort,
+    )
 
     return {
         "reranked_results": unique_top,

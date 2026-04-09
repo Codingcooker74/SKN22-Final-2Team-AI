@@ -63,7 +63,7 @@ def build_profile_state(state: ChatState) -> dict:
     target_species = pet_profile.get("species")
     target_age = 0.0
     is_pet_override = state.get("is_pet_override", False)
-    budget_val = None
+    budget_val = state.get("budget")
     pet_mismatch = False
 
     try:
@@ -119,7 +119,9 @@ def build_profile_state(state: ChatState) -> dict:
                         }
                     )
 
-                    budget_val = _resolve_budget_limit(pet_row.get("budget_range"))
+                    db_budget_limit = _resolve_budget_limit(pet_row.get("budget_range"))
+                    if budget_val is None:
+                        budget_val = db_budget_limit
 
                     preferences = fetch_pet_preferences(str(pet_id))
                     health_concerns = preferences["health_concerns"] or health_concerns

@@ -20,6 +20,7 @@ async def recommend(
     age: str | None = None,
     category: str | None = None,
     subcategory: str | None = None,
+    brand: str | None = None,
     health_concerns: list[str] | None = Query(default=None),
     allergies: list[str] | None = Query(default=None),
     food_preferences: list[str] | None = Query(default=None),
@@ -45,6 +46,7 @@ async def recommend(
                 pet_type=pet_type,
                 category=category,
                 subcategory=subcategory,
+                brand=brand,
             ),
         )
         return recommend_products(
@@ -56,6 +58,7 @@ async def recommend(
             age=age,
             category=category,
             subcategory=subcategory,
+            brand=brand,
             health_concerns=health_concerns,
             allergies=allergies,
             food_preferences=food_preferences,

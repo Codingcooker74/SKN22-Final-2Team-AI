@@ -8,6 +8,7 @@ from final_ai.domain.recommendation.constants import (
     AGE_MANDATORY_KEYWORDS,
     ALLERGY_SAFE_WORDS,
     ALLERGY_STOP_NOUNS,
+    ALLERGY_TERM_ALIASES,
     CORE_ANIMAL_PLANTS,
     FEED_CATEGORIES,
     MIXED_SUBS,
@@ -59,8 +60,16 @@ def _build_allergy_roots(allergies: list[str]) -> set[str]:
                 roots.add(animal)
         roots.add(text_lower)
 
-    logger.debug("allergy roots=%s", roots)
-    return roots
+    expanded_roots = set(roots)
+    for root in list(roots):
+        normalized_root = _normalize_text(root)
+        for aliases in ALLERGY_TERM_ALIASES.values():
+            normalized_aliases = {_normalize_text(alias) for alias in aliases}
+            if normalized_root in normalized_aliases:
+                expanded_roots.update(aliases)
+
+    logger.debug("allergy roots=%s expanded=%s", roots, expanded_roots)
+    return expanded_roots
 
 
 def _normalize_text(text) -> str:
@@ -139,11 +148,15 @@ def execute_search_state(state: ChatState) -> dict:
     pet_type = filters.get("pet_type")
     category = filters.get("category")
     subcategory = filters.get("subcategory")
+    brand = filters.get("brand")
     is_strict = subcategory in STRICT_SUBCATEGORIES if subcategory else False
     if relaxation > 0 and not is_strict:
         subcategory = None
     budget = state.get("budget")
     health_concerns = state.get("health_concerns") or []
+    allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
+    if not allowed_goods_ids and state.get("is_result_refinement"):
+        allowed_goods_ids = list(state.get("last_recommended_goods_ids") or [])
 
     pet_type_kr = normalize_pet_species(pet_type)
     if not pet_type_kr:
@@ -156,15 +169,19 @@ def execute_search_state(state: ChatState) -> dict:
         category=category,
         subcategory=subcategory,
         health_concerns=health_concerns,
+        brand=brand,
         budget=budget,
+        allowed_goods_ids=allowed_goods_ids,
     )
     logger.info(
-        "search hybrid returned=%s subcategory=%s category=%s pet=%s health=%s",
+        "search hybrid returned=%s subcategory=%s category=%s pet=%s health=%s allowed_ids=%s refinement=%s",
         len(candidates),
         subcategory,
         category,
         pet_type_kr,
         health_concerns,
+        len(allowed_goods_ids),
+        bool(state.get("is_result_refinement")),
     )
 
     candidates = [

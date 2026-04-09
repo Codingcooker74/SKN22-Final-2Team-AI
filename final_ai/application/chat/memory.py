@@ -14,6 +14,7 @@ MEMORY_DIALOG_STATE_KEYS = (
     "pending_pet_ids",
     "pending_categories",
     "target_pet_id",
+    "last_recommended_goods_ids",
     "pet_profile",
     "health_concerns",
     "allergies",
@@ -21,11 +22,13 @@ MEMORY_DIALOG_STATE_KEYS = (
     "is_pet_override",
     "pet_mismatch",
     "detected_aspect",
+    "refinement_sort",
     "budget",
     "filter_relaxation_count",
     "recommend_retry_pending",
     "decomposed_tasks",
     "pending_requests",
+    "is_result_refinement",
 )
 SUMMARY_MAX_BULLETS = 6
 SUMMARY_MAX_LINE_LENGTH = 120
@@ -82,6 +85,7 @@ def extract_dialog_state(state: dict) -> dict:
             "food_preferences",
             "decomposed_tasks",
             "pending_requests",
+            "last_recommended_goods_ids",
         }:
             dialog_state[key] = list(value or [])
             continue
@@ -91,7 +95,7 @@ def extract_dialog_state(state: dict) -> dict:
         if key in {"clarification_count", "filter_relaxation_count"}:
             dialog_state[key] = int(value or 0)
             continue
-        if key in {"is_pet_override", "pet_mismatch", "recommend_retry_pending"}:
+        if key in {"is_pet_override", "pet_mismatch", "recommend_retry_pending", "is_result_refinement"}:
             dialog_state[key] = bool(value)
             continue
         dialog_state[key] = value

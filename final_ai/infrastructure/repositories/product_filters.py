@@ -33,7 +33,9 @@ def build_product_filter_clauses(
     category: FilterValue = None,
     subcategory: FilterValue = None,
     health_concerns: FilterValue = None,
+    brand: str | None = None,
     budget: int | None = None,
+    allowed_goods_ids: list[str] | None = None,
 ) -> tuple[list[str], list[object]]:
     filters: list[str] = []
     params: list[object] = []
@@ -84,8 +86,22 @@ def build_product_filter_clauses(
             filters.append("health_concern_tags && %s::text[]")
             params.append(concerns)
 
+    if brand:
+        filters.append("brand_name ILIKE %s")
+        params.append(f"%{brand}%")
+
     if budget is not None:
         filters.append("price <= %s")
         params.append(budget)
+
+    if allowed_goods_ids:
+        goods_ids = normalize_filter_values(allowed_goods_ids)
+        if goods_ids:
+            if len(goods_ids) == 1:
+                filters.append("goods_id = %s")
+                params.append(goods_ids[0])
+            else:
+                filters.append("goods_id = ANY(%s::text[])")
+                params.append(goods_ids)
 
     return filters, params

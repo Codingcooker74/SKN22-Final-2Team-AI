@@ -51,6 +51,8 @@ class ChatExecutionRequestTests(unittest.TestCase):
                 "intents": ["recommend"],
                 "filters": {"pet_type": "강아지", "category": "사료"},
                 "clarification_count": 2,
+                "last_recommended_goods_ids": ["A1", "A2"],
+                "is_result_refinement": True,
             },
             last_compacted_message_id="m-0",
         )
@@ -69,6 +71,8 @@ class ChatExecutionRequestTests(unittest.TestCase):
         self.assertEqual(execution.initial_state["intents"], ["recommend"])
         self.assertEqual(execution.initial_state["filters"], {"pet_type": "강아지", "category": "사료"})
         self.assertEqual(execution.initial_state["clarification_count"], 2)
+        self.assertEqual(execution.initial_state["last_recommended_goods_ids"], ["A1", "A2"])
+        self.assertTrue(execution.initial_state["is_result_refinement"])
         self.assertEqual(execution.config["configurable"]["thread_id"], "thread-1")
         self.assertEqual(
             execution.config["metadata"],
@@ -118,6 +122,7 @@ class ChatContextHydrationTests(unittest.TestCase):
                         "intents": ["recommend"],
                         "filters": {"pet_type": "고양이"},
                         "target_pet_id": "pet-memory",
+                        "last_recommended_goods_ids": ["P1", "P2"],
                     },
                     "last_compacted_message_id": "old-1",
                 },
@@ -143,6 +148,7 @@ class ChatContextHydrationTests(unittest.TestCase):
         )
         self.assertEqual(hydrated.memory_summary, "- 기존 요약")
         self.assertEqual(hydrated.dialog_state["intents"], ["recommend"])
+        self.assertEqual(hydrated.dialog_state["last_recommended_goods_ids"], ["P1", "P2"])
         self.assertEqual(hydrated.pet_profile, {"species": "cat"})
         self.assertEqual(hydrated.health_concerns, ["skin"])
         self.assertEqual(hydrated.allergies, ["chicken"])
@@ -211,6 +217,52 @@ class StreamChatEventsTests(unittest.TestCase):
         self.assertEqual(events[0][0], "info")
         self.assertEqual(events[-1], ("error", {"message": "응답 생성 중 오류가 발생했습니다."}))
 
+    def test_stream_chat_events_hydrates_previous_recommendations_into_followup_graph_call(self):
+        request = ChatRequest(
+            thread_id="thread-1",
+            current_user_message_id="message-2",
+            request_id="req-2",
+            user_id="user-1",
+        )
+        fake_request = _FakeRequest(auth_context=_FakeAuthContext("req-2", "user-1", "thread-1"))
+        seen_initial_state = {}
+
+        async def fake_to_thread(*args, **kwargs):
+            nonlocal seen_initial_state
+            seen_initial_state = dict(args[1])
+            return {
+                "response": "후속 추천입니다",
+                "product_cards": [{"goods_id": "A1"}],
+                "last_recommended_goods_ids": ["A1"],
+            }
+
+        with (
+            patch(
+                "final_ai.application.chat.context.fetch_chat_context",
+                return_value={
+                    "message": "이 중에서 더 싼 거로 보여줘",
+                    "target_pet_id": None,
+                    "profile_context_type": "pet",
+                    "conversation_history": [{"role": "assistant", "content": "이전에 추천한 상품입니다."}],
+                    "summary_candidates": [],
+                    "memory_summary": "- 이전 추천 유지",
+                    "dialog_state": {
+                        "intents": ["recommend"],
+                        "filters": {"pet_type": "고양이", "category": "사료"},
+                        "last_recommended_goods_ids": ["A1", "A2"],
+                    },
+                    "last_compacted_message_id": "m-1",
+                },
+            ),
+            patch("final_ai.application.chat.service.get_pet_name_for_user", return_value="우리 아이"),
+            patch("final_ai.application.chat.service.asyncio.to_thread", side_effect=fake_to_thread),
+        ):
+            events = asyncio.run(_collect_events(stream_chat_events(request, fake_request)))
+
+        self.assertEqual(seen_initial_state["last_recommended_goods_ids"], ["A1", "A2"])
+        self.assertEqual(seen_initial_state["user_input"], "이 중에서 더 싼 거로 보여줘")
+        self.assertEqual(events[-1], ("done", {}))
+
 
 class ChatMemoryPayloadTests(unittest.TestCase):
     def test_build_memory_payload_compacts_summary_candidates_and_updates_cursor(self):
@@ -223,6 +275,7 @@ class ChatMemoryPayloadTests(unittest.TestCase):
             "intents": ["recommend"],
             "filters": {"pet_type": "고양이", "category": "사료"},
             "clarification_count": 1,
+            "last_recommended_goods_ids": ["GI1", "GI2"],
         }
 
         fake_response = SimpleNamespace(
@@ -236,6 +289,7 @@ class ChatMemoryPayloadTests(unittest.TestCase):
             payload["memory_summary"],
             "- 닭고기 알레르기를 고려한 고양이 사료를 반복적으로 찾고 있음",
         )
+        self.assertEqual(payload["dialog_state"]["last_recommended_goods_ids"], ["GI1", "GI2"])
         self.assertEqual(payload["last_compacted_message_id"], "m-2")
 
 

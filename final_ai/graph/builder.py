@@ -165,6 +165,8 @@ def chat(
         "food_preferences": food_preferences or [],
         "user_id": user_id,
         "target_pet_id": target_pet_id,
+        "last_recommended_goods_ids": [],
+        "allowed_goods_ids": [],
         "pending_requests": [],
         "breed_context": None,
         "search_results": [],
@@ -173,9 +175,11 @@ def chat(
         "product_cards": [],
         "filter_relaxation_count": 0,
         "recommend_retry_pending": False,
+        "refinement_sort": None,
         "clarification_count": 0,
         "intents": [],
         "is_pet_override": False,
+        "is_result_refinement": False,
         "pet_mismatch": False,
     }
     result = graph.invoke(initial_state, config=config)

@@ -1,4 +1,5 @@
 import json
+import re
 
 from final_ai.api.dependencies.request_context import ensure_request_active
 from final_ai.application.chat.memory import format_conversation_history
@@ -28,6 +29,42 @@ HEALTH_CONCERN_MAP = {
     "헤어볼": ["그루밍", "헤어볼제거"],
     "면역": ["체력", "활력", "항산화", "면역력"],
 }
+
+_RESULT_REFINEMENT_TOKENS = (
+    "이중에서",
+    "이중",
+    "그중에서",
+    "그중",
+    "추천한것중",
+    "추천해준것중",
+    "방금추천한것중",
+    "위에나온것중",
+)
+
+
+def _infer_pet_type_from_text(text: str | None) -> str | None:
+    raw = str(text or "")
+    lowered = raw.lower()
+
+    has_dog = "강아지" in raw or bool(re.search(r"\b(?:dog|puppy)\b", lowered))
+    has_cat = "고양이" in raw or bool(re.search(r"\b(?:cat|kitten)\b", lowered))
+
+    if has_dog == has_cat:
+        return None
+    return "강아지" if has_dog else "고양이"
+
+
+def _is_result_refinement_request(
+    text: str | None,
+    *,
+    previous_goods_ids: list[str] | None,
+) -> bool:
+    if not previous_goods_ids:
+        return False
+    normalized = re.sub(r"\s+", "", str(text or "")).lower()
+    if not normalized:
+        return False
+    return any(token in normalized for token in _RESULT_REFINEMENT_TOKENS)
 
 
 
@@ -112,6 +149,8 @@ def _build_context(
         "filters": prev_filters,
         "pet_profile": prev_pet,
         "current_pet_id": target_pet_id,
+        "has_previous_recommendations": bool(state.get("last_recommended_goods_ids")),
+        "previous_recommendation_count": len(state.get("last_recommended_goods_ids") or []),
         "user_registered_pets": [pet["name"] for pet in user_pets],
     }
     context_parts.append(f"이전 대화 상태 및 등록된 펫 정보: {json.dumps(prev_data, ensure_ascii=False)}")
@@ -140,6 +179,7 @@ def classify_intent(state: ChatState) -> dict:
     prev_filters = normalize_search_filters(state.get("filters"))
     prev_pet = state.get("pet_profile") or {}
     target_pet_id = state.get("target_pet_id")
+    prev_last_recommended_goods_ids = list(state.get("last_recommended_goods_ids") or [])
     pending_requests = list(state.get("pending_requests") or [])
     decomposed_tasks = list(state.get("decomposed_tasks") or [])
 
@@ -191,8 +231,19 @@ def classify_intent(state: ChatState) -> dict:
     exclude_ingredients = result.get("exclude_ingredients") or []
     raw_health_concerns = result.get("health_concerns") or []
     target_categories = result.get("target_categories") or []
-    is_explicit_pet_info = bool(result.get("pet_type") or result.get("breed"))
+    detected_brand = normalize_filter_value(result.get("brand"))
+    explicit_pet_type = result.get("pet_type") or _infer_pet_type_from_text(original_user_input)
+    is_explicit_pet_info = bool(explicit_pet_type or result.get("breed"))
     new_decomposed_tasks = result.get("decomposed_tasks") or []
+    refinement_sort = normalize_filter_value(result.get("refinement_sort"))
+    llm_result_refinement = result.get("is_result_refinement")
+    if isinstance(llm_result_refinement, bool):
+        is_result_refinement = llm_result_refinement
+    else:
+        is_result_refinement = _is_result_refinement_request(
+            original_user_input,
+            previous_goods_ids=prev_last_recommended_goods_ids,
+        )
 
     if new_decomposed_tasks:
         logger.info("─── Query Decomposition Detected ───")
@@ -239,6 +290,30 @@ def classify_intent(state: ChatState) -> dict:
 
     detected_health_concerns = map_health_concerns(raw_health_concerns)
 
+    has_structured_followup_signal = bool(
+        mentioned_names
+        or new_decomposed_tasks
+        or explicit_pet_type
+        or result.get("breed")
+        or result.get("age")
+        or target_categories
+        or detected_health_concerns
+        or exclude_ingredients
+        or result.get("subcategory")
+        or result.get("budget")
+        or is_result_refinement
+    )
+
+    if new_intents == ["unclear"] and "recommend" in prev_intents and has_structured_followup_signal:
+        new_intents = ["recommend"]
+
+    if not new_intents and "recommend" in prev_intents and is_result_refinement:
+        new_intents = ["recommend"]
+
+    if "recommend" in new_intents and "domain_qa" not in new_intents:
+        if any(keyword in original_user_input for keyword in ("왜", "설명", "이유")):
+            new_intents = [*new_intents, "domain_qa"]
+
     is_pet_switched = False
     switched_pet_name = None
     overridden_metadata = {}
@@ -246,9 +321,9 @@ def classify_intent(state: ChatState) -> dict:
     # 펫 타입 결정
     temp_pet = dict(prev_pet)
     if is_explicit_pet_info and not target_pet_id:
-        if result.get("pet_type"):
-            temp_pet["species"] = "dog" if result["pet_type"] == "강아지" else "cat"
-    pet_type_kr = "고양이" if (temp_pet.get("species") == "cat" or result.get("pet_type") == "고양이") else "강아지"
+        if explicit_pet_type:
+            temp_pet["species"] = "dog" if explicit_pet_type == "강아지" else "cat"
+    pet_type_kr = "고양이" if (temp_pet.get("species") == "cat" or explicit_pet_type == "고양이") else "강아지"
 
     # ── [중요] decomposed_tasks 개별 보정 로직 ──
     if new_decomposed_tasks and "recommend" in new_intents:
@@ -290,6 +365,10 @@ def classify_intent(state: ChatState) -> dict:
             result["age"] = first_task["age"]
         
         new_intents = ["recommend"]
+
+    if "recommend" in new_intents and "domain_qa" not in new_intents:
+        if any(keyword in original_user_input for keyword in ("왜", "설명", "이유")):
+            new_intents = [*new_intents, "domain_qa"]
 
     # 5. 펫 매칭 및 전환 로직
     if mentioned_names:
@@ -360,8 +439,8 @@ def classify_intent(state: ChatState) -> dict:
     if not target_pet_id:
         if is_explicit_pet_info or result.get("age"):
             new_pet = {} # 펫 선택 안함 상태에서 새로운 정보가 들어오면 기존 프로필 오염 제거
-            if result.get("pet_type"):
-                new_pet["species"] = "dog" if result["pet_type"] == "강아지" else "cat"
+            if explicit_pet_type:
+                new_pet["species"] = "dog" if explicit_pet_type == "강아지" else "cat"
             if result.get("breed"):
                 new_pet["breed"] = result["breed"]
             if result.get("age"):
@@ -370,12 +449,12 @@ def classify_intent(state: ChatState) -> dict:
         new_pet["age"] = result["age"]
 
     new_filters: SearchFilters = {}
-    is_major_switch = is_pet_switched or target_categories
+    is_major_switch = bool(target_categories)
 
     # [중요] 펫 타입 필터 결정 우선순위 보정
     # 1. 사용자의 현재 입력에서 감지된 펫 타입이 있으면 최우선 (이게 "고양이"로 튀는 것을 막아줍니다)
-    if result.get("pet_type"):
-        new_filters["pet_type"] = result["pet_type"]
+    if explicit_pet_type:
+        new_filters["pet_type"] = explicit_pet_type
     # 2. 입력에 없으면 프로필 정보를 따름
     elif new_pet.get("species"):
         new_filters["pet_type"] = "강아지" if new_pet["species"] == "dog" else "고양이"
@@ -410,11 +489,15 @@ def classify_intent(state: ChatState) -> dict:
         if new_filters.get("category") == prev_filters.get("category"):
             new_filters["subcategory"] = prev_filters.get("subcategory")
 
+    if detected_brand:
+        new_filters["brand"] = detected_brand
+
     if "popularity" in new_intents and "subcategory" in new_filters:
         del new_filters["subcategory"]
 
     logger.info(
-        "intent classified input=%s intents=%s pet=%s filters=%s decomposed_count=%s",
+        "intent classified original_input=%s normalized_input=%s intents=%s pet=%s filters=%s decomposed_count=%s refinement=%s allowed_ids=%s",
+        original_user_input,
         current_user_input,
         new_intents,
         new_pet.get("name", new_pet.get("breed", "Unknown")),
@@ -422,8 +505,11 @@ def classify_intent(state: ChatState) -> dict:
             pet_type=new_filters.get("pet_type"),
             category=new_filters.get("category"),
             subcategory=new_filters.get("subcategory"),
+            brand=new_filters.get("brand"),
         ),
-        len(decomposed_tasks)
+        len(decomposed_tasks),
+        is_result_refinement,
+        len(prev_last_recommended_goods_ids),
     )
 
     combined_allergies = list(
@@ -434,12 +520,18 @@ def classify_intent(state: ChatState) -> dict:
     combined_health_concerns = list(set(current_health_concerns + detected_health_concerns))
 
     return {
+        "original_user_input": original_user_input,
+        "normalized_user_input": current_user_input,
         "intents": new_intents,
         "target_pet_id": target_pet_id,
+        "last_recommended_goods_ids": prev_last_recommended_goods_ids,
+        "allowed_goods_ids": prev_last_recommended_goods_ids if is_result_refinement else [],
         "pending_requests": pending_requests,
         "decomposed_tasks": decomposed_tasks,
         "new_decomposed_tasks": new_decomposed_tasks,
         "is_pet_switched": is_pet_switched,
+        "is_result_refinement": is_result_refinement,
+        "refinement_sort": refinement_sort if is_result_refinement else None,
         "switched_pet_name": switched_pet_name,
         "domain_intent": result.get("domain_intent") or state.get("domain_intent"),
         "detected_aspect": result.get("detected_aspect") or state.get("detected_aspect"),
@@ -448,12 +540,13 @@ def classify_intent(state: ChatState) -> dict:
             pet_type=new_filters.get("pet_type"),
             category=new_filters.get("category"),
             subcategory=new_filters.get("subcategory"),
+            brand=new_filters.get("brand"),
         ),
         "pet_profile": new_pet,
         "is_pet_override": is_explicit_pet_info or is_pet_switched,
         "pet_mismatch": False if is_pet_switched else state.get("pet_mismatch", False),
         "filter_relaxation_count": 0 if target_categories else state.get("filter_relaxation_count", 0),
+        **overridden_metadata,
         "allergies": combined_allergies,
         "health_concerns": combined_health_concerns,
-        **overridden_metadata,
     }
