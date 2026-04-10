@@ -1,5 +1,5 @@
+from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.graph.state import ChatState
-
 from final_ai.infrastructure.observability import get_logger
 from final_ai.infrastructure.repositories.pet_repository import (
     fetch_pet_full_profile,
@@ -11,23 +11,8 @@ from final_ai.infrastructure.search.hybrid_search import normalize_pet_species
 
 logger = get_logger(__name__)
 
-HEALTH_CONCERN_MAP = {
-    "skin": "피부",
-    "joint": "관절",
-    "digestion": "소화",
-    "weight": "체중",
-    "urinary": "요로",
-    "eye": "눈물",
-    "hairball": "헤어볼",
-    "dental": "치아",
-    "immunity": "면역",
-}
-
-
 def translate_health_concerns(concerns: list[str] | None) -> list[str]:
-    if not concerns:
-        return []
-    return [HEALTH_CONCERN_MAP.get(concern, concern) for concern in concerns]
+    return normalize_health_concerns(concerns)
 
 
 def build_pet_context(state: ChatState) -> str:

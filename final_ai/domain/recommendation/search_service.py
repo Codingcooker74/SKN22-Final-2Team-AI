@@ -3,6 +3,7 @@ import json
 import unicodedata
 
 from final_ai.contracts.filters import normalize_search_filters
+from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.domain.recommendation.constants import (
     AGE_EXCLUDE_KEYWORDS,
     AGE_MANDATORY_KEYWORDS,
@@ -153,7 +154,7 @@ def execute_search_state(state: ChatState) -> dict:
     if relaxation > 0 and not is_strict:
         subcategory = None
     budget = state.get("budget")
-    health_concerns = state.get("health_concerns") or []
+    health_concerns = normalize_health_concerns(state.get("health_concerns") or [])
     allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
     if not allowed_goods_ids and state.get("is_result_refinement"):
         allowed_goods_ids = list(state.get("last_recommended_goods_ids") or [])
