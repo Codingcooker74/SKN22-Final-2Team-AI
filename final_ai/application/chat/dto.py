@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from final_ai.contracts.chat import ChatRequest
 from final_ai.contracts.filters import normalize_search_filters
+from final_ai.domain.profile.health_concerns import normalize_health_concerns
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,9 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "last_recommended_goods_ids": list(dialog_state.get("last_recommended_goods_ids") or []),
         "allowed_goods_ids": [],
         "pet_profile": req.pet_profile if req.pet_profile is not None else dict(dialog_state.get("pet_profile") or {}),
-        "health_concerns": req.health_concerns or list(dialog_state.get("health_concerns") or []),
+        "health_concerns": normalize_health_concerns(
+            req.health_concerns or list(dialog_state.get("health_concerns") or [])
+        ),
         "allergies": req.allergies or list(dialog_state.get("allergies") or []),
         "food_preferences": req.food_preferences or list(dialog_state.get("food_preferences") or []),
         "intents": list(dialog_state.get("intents") or []),

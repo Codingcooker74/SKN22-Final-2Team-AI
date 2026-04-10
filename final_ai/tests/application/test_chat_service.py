@@ -36,6 +36,17 @@ class _FakeRequest:
 
 
 class ChatExecutionRequestTests(unittest.TestCase):
+    def test_build_chat_execution_request_normalizes_dialog_state_health_concerns(self):
+        request = ChatRequest(
+            message="사료 추천",
+            thread_id="thread-1",
+            dialog_state={"health_concerns": ["joint"]},
+        )
+
+        execution = build_chat_execution_request(request)
+
+        self.assertEqual(execution.initial_state["health_concerns"], ["관절"])
+
     def test_build_chat_execution_request_includes_metadata(self):
         request = ChatRequest(
             message="사료 추천",

@@ -5,7 +5,23 @@ from final_ai.domain.profile.service import build_pet_context, translate_health_
 
 class ProfileServiceTests(unittest.TestCase):
     def test_translate_health_concerns_maps_known_values(self):
-        self.assertEqual(translate_health_concerns(["skin", "joint", "unknown"]), ["피부", "관절", "unknown"])
+        self.assertEqual(
+            translate_health_concerns(
+                [
+                    "skin",
+                    "joint",
+                    "digestion",
+                    "weight",
+                    "urinary",
+                    "eye",
+                    "hairball",
+                    "dental",
+                    "immunity",
+                    "unknown",
+                ]
+            ),
+            ["피부", "관절", "소화", "체중", "요로", "눈물", "헤어볼", "치아", "면역", "unknown"],
+        )
 
     def test_build_pet_context_includes_profile_and_preferences(self):
         state = {

@@ -1,5 +1,6 @@
 import re
 
+from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
 from final_ai.infrastructure.repositories.pet_repository import (
@@ -56,7 +57,7 @@ def build_profile_state(state: ChatState) -> dict:
     user_id = state.get("user_id")
     target_pet_id = state.get("target_pet_id")
     pet_profile = dict(state.get("pet_profile") or {})
-    health_concerns = list(state.get("health_concerns") or [])
+    health_concerns = normalize_health_concerns(state.get("health_concerns") or [])
     allergies = list(state.get("allergies") or [])
     food_prefs = list(state.get("food_preferences") or [])
     target_breed = pet_profile.get("breed")
@@ -124,7 +125,7 @@ def build_profile_state(state: ChatState) -> dict:
                         budget_val = db_budget_limit
 
                     preferences = fetch_pet_preferences(str(pet_id))
-                    health_concerns = preferences["health_concerns"] or health_concerns
+                    health_concerns = normalize_health_concerns(preferences["health_concerns"] or health_concerns)
                     allergies = preferences["allergies"] or allergies
                     food_prefs = preferences["food_preferences"] or food_prefs
         except Exception as exc:

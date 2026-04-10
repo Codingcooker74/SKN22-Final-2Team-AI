@@ -1,5 +1,6 @@
 from final_ai.contracts.filters import build_search_filters, normalize_search_filters
 from final_ai.domain.recommendation.constants import STRICT_SUBCATEGORIES
+from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.infrastructure.observability import get_logger
 from final_ai.graph.state import ChatState
 
@@ -42,7 +43,7 @@ def build_search_query_state(state: ChatState) -> dict:
     subcategory_hint = raw_sub if (relaxation == 0 or is_strict) else ""
 
     # 건강 고민 및 연령대
-    concerns = state.get("health_concerns") or []
+    concerns = normalize_health_concerns(state.get("health_concerns") or [])
     age_group = state.get("age_group") or ""
 
     # 2. 쿼리 구성 요소 수집 (순서: 종 -> 품종 -> 카테고리 -> 소분류 -> 건강고민 -> 연령대)
