@@ -333,6 +333,46 @@ class IntentServiceTests(unittest.TestCase):
 
     @patch("final_ai.domain.intent.service.get_user_pets", return_value=[])
     @patch("final_ai.domain.intent.service._classify_user_input")
+    def test_classify_intent_recovers_compact_recommend_request_from_category_keyword(
+        self,
+        mock_classify_user_input,
+        _mock_get_user_pets,
+    ):
+        mock_classify_user_input.return_value = {
+            "intents": ["unclear"],
+            "target_categories": [],
+        }
+
+        result = classify_intent(
+            {
+                "user_input": "사료추천해줘",
+                "user_id": None,
+                "intents": [],
+                "filters": {},
+                "exclusions": {},
+                "pet_profile": {},
+                "target_pet_id": None,
+                "pending_requests": [],
+                "decomposed_tasks": [],
+                "health_concerns": [],
+                "allergies": [],
+                "food_preferences": [],
+                "clarification_count": 0,
+                "filter_relaxation_count": 0,
+                "recommend_retry_pending": False,
+                "pet_mismatch": False,
+                "conversation_history": [],
+                "summary_candidates": [],
+                "memory_summary": "",
+            }
+        )
+
+        self.assertEqual(result["intents"], ["recommend"])
+        self.assertEqual(result["filters"]["category"], "사료")
+        self.assertNotIn("pet_type", result["filters"])
+
+    @patch("final_ai.domain.intent.service.get_user_pets", return_value=[])
+    @patch("final_ai.domain.intent.service._classify_user_input")
     def test_classify_intent_moves_excluded_brand_to_exclusions(
         self,
         mock_classify_user_input,
