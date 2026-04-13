@@ -50,7 +50,7 @@ def build_product_filter_clauses(
             filters.append("%s = ANY(pet_type)")
             params.append(pet_types[0])
         else:
-            filters.append("pet_type && %s::text[]")
+            filters.append("pet_type && %s::varchar[]")
             params.append(pet_types)
 
     if categories:
@@ -65,7 +65,7 @@ def build_product_filter_clauses(
             )
             params.extend([cat_pattern, cat_pattern])
         else:
-            filters.append("(category && %s::text[] OR subcategory && %s::text[])")
+            filters.append("(category && %s::varchar[] OR subcategory && %s::varchar[])")
             params.extend([categories, categories])
 
     if subcategories:
@@ -75,7 +75,7 @@ def build_product_filter_clauses(
             filters.append("EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)")
             params.append(sub_pattern)
         else:
-            filters.append("subcategory && %s::text[]")
+            filters.append("subcategory && %s::varchar[]")
             params.append(subcategories)
 
     if concerns:
@@ -83,7 +83,7 @@ def build_product_filter_clauses(
             filters.append("%s = ANY(health_concern_tags)")
             params.append(concerns[0])
         else:
-            filters.append("health_concern_tags && %s::text[]")
+            filters.append("health_concern_tags && %s::varchar[]")
             params.append(concerns)
 
     if brand:

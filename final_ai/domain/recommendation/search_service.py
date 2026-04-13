@@ -155,6 +155,7 @@ def execute_search_state(state: ChatState) -> dict:
         subcategory = None
     budget = state.get("budget")
     health_concerns = normalize_health_concerns(state.get("health_concerns") or [])
+    search_health_concerns = [] if relaxation > 0 else health_concerns
     allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
     if not allowed_goods_ids and state.get("is_result_refinement"):
         allowed_goods_ids = list(state.get("last_recommended_goods_ids") or [])
@@ -169,7 +170,7 @@ def execute_search_state(state: ChatState) -> dict:
         pet_type=pet_type_kr,
         category=category,
         subcategory=subcategory,
-        health_concerns=health_concerns,
+        health_concerns=search_health_concerns,
         brand=brand,
         budget=budget,
         allowed_goods_ids=allowed_goods_ids,
@@ -180,10 +181,12 @@ def execute_search_state(state: ChatState) -> dict:
         subcategory,
         category,
         pet_type_kr,
-        health_concerns,
+        search_health_concerns,
         len(allowed_goods_ids),
         bool(state.get("is_result_refinement")),
     )
+    if health_concerns and not search_health_concerns:
+        logger.info("search health filter relaxed original_health=%s relaxation=%s", health_concerns, relaxation)
 
     candidates = [
         candidate

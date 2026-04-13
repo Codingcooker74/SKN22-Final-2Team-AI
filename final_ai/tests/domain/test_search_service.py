@@ -29,6 +29,29 @@ class SearchServiceTests(unittest.TestCase):
         self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["health_concerns"], ["소화"])
 
     @patch("final_ai.domain.recommendation.search_service.hybrid_search_pg", return_value=[])
+    def test_execute_search_state_relaxes_health_concern_filter_after_retry(
+        self,
+        mock_hybrid_search_pg,
+    ):
+        execute_search_state(
+            {
+                "user_input": "사료 추천",
+                "search_query": "강아지 시츄 사료 요로",
+                "filters": {"pet_type": "강아지", "category": "사료"},
+                "pet_profile": {"species": "dog"},
+                "health_concerns": ["urinary"],
+                "allergies": [],
+                "budget": None,
+                "filter_relaxation_count": 1,
+                "is_result_refinement": False,
+                "allowed_goods_ids": [],
+            }
+        )
+
+        self.assertEqual(mock_hybrid_search_pg.call_count, 1)
+        self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["health_concerns"], [])
+
+    @patch("final_ai.domain.recommendation.search_service.hybrid_search_pg", return_value=[])
     def test_execute_search_state_uses_previous_recommendations_for_refinement(
         self,
         mock_hybrid_search_pg,

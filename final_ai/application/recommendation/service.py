@@ -103,9 +103,13 @@ def recommend_products(
     }
 
     state.update(build_profile_state(state))
-    state.update(build_search_query_state(state))
-    state.update(execute_search_state(state))
-    state.update(rerank_search_results(state))
+    # Initial strict search plus one relaxed retry, matching graph retry behavior.
+    for _ in range(2):
+        state.update(build_search_query_state(state))
+        state.update(execute_search_state(state))
+        state.update(rerank_search_results(state))
+        if not state.get("recommend_retry_pending"):
+            break
 
     top_products = (state.get("reranked_results") or [])[:limit]
     return {
