@@ -74,6 +74,12 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "refinement_sort": dialog_state.get("refinement_sort"),
         "is_pet_override": bool(dialog_state.get("is_pet_override")),
         "pet_mismatch": bool(dialog_state.get("pet_mismatch")),
+        "best_reranked_results": [],
+        "recommendation_limit": 5,
+        "effective_filters": {},
+        "original_filters": {},
+        "relaxed_filters": [],
+        "candidate_count_by_stage": {},
         "filters": normalize_search_filters(dialog_state.get("filters")),
     }
     return ChatExecutionRequest(

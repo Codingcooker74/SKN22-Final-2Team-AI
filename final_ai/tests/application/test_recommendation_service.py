@@ -5,37 +5,45 @@ from final_ai.application.recommendation.service import recommend_products
 
 
 class RecommendationServiceTests(unittest.TestCase):
-    def test_recommend_products_retries_when_initial_search_has_no_candidates(self):
-        product = {
-            "goods_id": "GI1",
-            "goods_name": "강아지 기본 사료",
-            "brand_name": "테스트",
-            "price": 10000,
-            "discount_price": 9000,
-            "rating": 9.5,
-            "review_count": 12,
-            "thumbnail_url": "https://example.com/a.jpg",
-            "product_url": "https://example.com/a",
-        }
+    def test_recommend_products_retries_until_five_products_then_stops(self):
+        products = [
+            {
+                "goods_id": f"GI{index}",
+                "goods_name": f"강아지 기본 사료 {index}",
+                "brand_name": "테스트",
+                "price": 10000,
+                "discount_price": 9000,
+                "rating": 9.5,
+                "review_count": 12,
+                "thumbnail_url": f"https://example.com/{index}.jpg",
+                "product_url": f"https://example.com/{index}",
+            }
+            for index in range(1, 6)
+        ]
         seen_relaxations = []
 
         def fake_execute_search_state(state):
             seen_relaxations.append(state.get("filter_relaxation_count", 0))
-            if state.get("filter_relaxation_count", 0) == 0:
+            relaxation = state.get("filter_relaxation_count", 0)
+            if relaxation == 0:
                 return {"search_results": []}
-            return {"search_results": [product]}
+            if relaxation == 1:
+                return {"search_results": products[:3]}
+            return {"search_results": products}
 
         def fake_rerank_search_results(state):
-            if not state.get("search_results"):
+            results = state.get("search_results") or []
+            relaxation = state.get("filter_relaxation_count", 0)
+            if not results:
                 return {
                     "reranked_results": [],
-                    "filter_relaxation_count": 1,
-                    "recommend_retry_pending": True,
+                    "filter_relaxation_count": relaxation + 1,
+                    "recommend_retry_pending": relaxation < 4,
                 }
             return {
-                "reranked_results": [product],
-                "filter_relaxation_count": state.get("filter_relaxation_count", 0),
-                "recommend_retry_pending": False,
+                "reranked_results": results,
+                "filter_relaxation_count": relaxation + 1 if len(results) < 5 else relaxation,
+                "recommend_retry_pending": len(results) < 5 and relaxation < 4,
             }
 
         with (
@@ -75,7 +83,7 @@ class RecommendationServiceTests(unittest.TestCase):
                 limit=5,
             )
 
-        self.assertEqual(seen_relaxations, [0, 1])
-        self.assertEqual(result["products"][0]["goods_id"], "GI1")
-        self.assertEqual(result["meta"]["filter_relaxation_count"], 1)
+        self.assertEqual(seen_relaxations, [0, 1, 2])
+        self.assertEqual([product["goods_id"] for product in result["products"]], ["GI1", "GI2", "GI3", "GI4", "GI5"])
+        self.assertEqual(result["meta"]["filter_relaxation_count"], 2)
         self.assertFalse(result["meta"]["recommend_retry_pending"])

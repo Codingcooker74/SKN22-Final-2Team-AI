@@ -52,6 +52,81 @@ class SearchServiceTests(unittest.TestCase):
         self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["health_concerns"], [])
 
     @patch("final_ai.domain.recommendation.search_service.hybrid_search_pg", return_value=[])
+    def test_execute_search_state_relaxes_subcategory_from_second_retry(
+        self,
+        mock_hybrid_search_pg,
+    ):
+        result = execute_search_state(
+            {
+                "user_input": "습식사료 추천",
+                "search_query": "강아지 사료",
+                "filters": {"pet_type": "강아지", "category": "사료", "subcategory": "습식사료"},
+                "pet_profile": {"species": "dog"},
+                "health_concerns": ["피부"],
+                "allergies": [],
+                "budget": None,
+                "filter_relaxation_count": 2,
+                "is_result_refinement": False,
+                "allowed_goods_ids": [],
+            }
+        )
+
+        self.assertIsNone(mock_hybrid_search_pg.call_args.kwargs["subcategory"])
+        self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["health_concerns"], [])
+        self.assertEqual(result["relaxed_filters"], ["health_concern", "subcategory"])
+
+    @patch(
+        "final_ai.domain.recommendation.search_service.hybrid_search_pg",
+        return_value=[
+            {
+                "goods_id": "GI1",
+                "goods_name": "강아지 퍼피 사료",
+                "category": ["사료"],
+                "subcategory": ["퍼피"],
+                "health_concern_tags": [],
+            }
+        ],
+    )
+    def test_execute_search_state_skips_age_filter_from_third_retry(
+        self,
+        mock_hybrid_search_pg,
+    ):
+        strict_result = execute_search_state(
+            {
+                "user_input": "사료 추천",
+                "search_query": "강아지 사료",
+                "filters": {"pet_type": "강아지", "category": "사료"},
+                "pet_profile": {"species": "dog", "breed": "말티즈"},
+                "health_concerns": [],
+                "allergies": [],
+                "budget": None,
+                "age_group": "어덜트",
+                "filter_relaxation_count": 0,
+                "is_result_refinement": False,
+                "allowed_goods_ids": [],
+            }
+        )
+        relaxed_result = execute_search_state(
+            {
+                "user_input": "사료 추천",
+                "search_query": "강아지 사료",
+                "filters": {"pet_type": "강아지", "category": "사료"},
+                "pet_profile": {"species": "dog", "breed": "말티즈"},
+                "health_concerns": [],
+                "allergies": [],
+                "budget": None,
+                "age_group": "어덜트",
+                "filter_relaxation_count": 3,
+                "is_result_refinement": False,
+                "allowed_goods_ids": [],
+            }
+        )
+
+        self.assertEqual(strict_result["search_results"], [])
+        self.assertEqual(len(relaxed_result["search_results"]), 1)
+        self.assertEqual(relaxed_result["relaxed_filters"], ["age_group", "breed"])
+
+    @patch("final_ai.domain.recommendation.search_service.hybrid_search_pg", return_value=[])
     def test_execute_search_state_uses_previous_recommendations_for_refinement(
         self,
         mock_hybrid_search_pg,

@@ -19,3 +19,32 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertIn("소화", result["search_query"])
         self.assertNotIn("digestion", result["search_query"])
+
+    def test_build_search_query_state_relaxes_query_hints_by_stage(self):
+        base_state = {
+            "user_input": "6개월 말티즈 요로 습식사료 추천",
+            "filters": {"pet_type": "dog", "category": "사료", "subcategory": "습식사료"},
+            "pet_profile": {"species": "dog", "breed": "말티즈"},
+            "health_concerns": ["urinary"],
+            "age_group": "퍼피",
+            "is_result_refinement": False,
+        }
+
+        strict = build_search_query_state({**base_state, "filter_relaxation_count": 0})
+        no_health = build_search_query_state({**base_state, "filter_relaxation_count": 1})
+        no_subcategory = build_search_query_state({**base_state, "filter_relaxation_count": 2})
+        core_query = build_search_query_state({**base_state, "filter_relaxation_count": 3})
+
+        self.assertIn("요로", strict["search_query"])
+        self.assertIn("습식사료", strict["search_query"])
+        self.assertIn("말티즈", strict["search_query"])
+        self.assertIn("퍼피", strict["search_query"])
+
+        self.assertNotIn("요로", no_health["search_query"])
+        self.assertIn("습식사료", no_health["search_query"])
+
+        self.assertNotIn("습식사료", no_subcategory["search_query"])
+        self.assertEqual(no_subcategory["filters"], {"pet_type": "강아지", "category": "사료"})
+
+        self.assertEqual(core_query["search_query"], "강아지 사료")
+        self.assertEqual(core_query["relaxed_filters"], ["health_concern", "subcategory", "age_group", "breed"])

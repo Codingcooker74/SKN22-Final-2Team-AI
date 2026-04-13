@@ -1,7 +1,13 @@
 import ast
 import re
 
-from final_ai.domain.recommendation.constants import HEALTH_TRAIT_KEYWORDS
+from final_ai.domain.recommendation.constants import HEALTH_TRAIT_KEYWORDS, RECOMMENDATION_TOP_K
+from final_ai.domain.recommendation.filter_relaxation import (
+    clamp_relaxation_count,
+    next_relaxation_count,
+    should_retry_recommendation,
+    target_recommendation_count,
+)
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
 
@@ -10,8 +16,16 @@ BETA = 0.25
 GAMMA = 0.15
 DELTA = 0.10
 EPSILON = 0.10
-TOP_K = 5
+TOP_K = RECOMMENDATION_TOP_K
 logger = get_logger(__name__)
+
+
+def _choose_best_results(current: list[dict], previous: list[dict], *, target_count: int) -> list[dict]:
+    if len(current) >= target_count:
+        return current
+    if len(previous) > len(current):
+        return previous
+    return current
 
 
 def _normalize(values: list[float]) -> list[float]:
@@ -109,16 +123,30 @@ def rerank_search_results(state: ChatState) -> dict:
     candidates = state.get("search_results") or []
     detected_aspect = state.get("detected_aspect")
     intents = state.get("intents") or []
-    relaxation = state.get("filter_relaxation_count", 0)
+    relaxation = clamp_relaxation_count(state.get("filter_relaxation_count", 0))
     refinement_sort = state.get("refinement_sort")
+    target_count = target_recommendation_count(state)
+    best_results = list(state.get("best_reranked_results") or [])
 
     if not candidates:
-        should_retry = relaxation < 1
-        next_relaxation = relaxation + 1 if should_retry else relaxation
-        logger.info("rerank empty candidates relaxation=%s retry=%s", relaxation, should_retry)
+        final_results = _choose_best_results([], best_results, target_count=target_count)
+        should_retry = should_retry_recommendation(
+            result_count=len(final_results),
+            relaxation=relaxation,
+            target_count=target_count,
+        )
+        new_relaxation = next_relaxation_count(relaxation) if should_retry else relaxation
+        logger.info(
+            "rerank empty candidates relaxation=%s target=%s retry=%s best=%s",
+            relaxation,
+            target_count,
+            should_retry,
+            len(final_results),
+        )
         return {
-            "reranked_results": [],
-            "filter_relaxation_count": next_relaxation,
+            "reranked_results": final_results,
+            "best_reranked_results": final_results,
+            "filter_relaxation_count": new_relaxation,
             "recommend_retry_pending": should_retry,
         }
 
@@ -219,20 +247,28 @@ def rerank_search_results(state: ChatState) -> dict:
         if len(unique_top) >= TOP_K:
             break
 
-    should_retry = len(unique_top) < 3 and relaxation < 1
-    new_relaxation = relaxation + 1 if should_retry else relaxation
+    final_results = _choose_best_results(unique_top, best_results, target_count=target_count)
+    should_retry = should_retry_recommendation(
+        result_count=len(final_results),
+        relaxation=relaxation,
+        target_count=target_count,
+    )
+    new_relaxation = next_relaxation_count(relaxation) if should_retry else relaxation
     mode_str = "POPULARITY" if is_popularity_mode else "NORMAL"
     logger.info(
-        "rerank mode=%s final=%s relaxation=%s refinement=%s refinement_sort=%s",
+        "rerank mode=%s final=%s target=%s relaxation=%s retry=%s refinement=%s refinement_sort=%s",
         mode_str,
-        len(unique_top),
+        len(final_results),
+        target_count,
         relaxation,
+        should_retry,
         bool(state.get("is_result_refinement")),
         refinement_sort,
     )
 
     return {
-        "reranked_results": unique_top,
+        "reranked_results": final_results,
+        "best_reranked_results": final_results,
         "filter_relaxation_count": new_relaxation,
         "recommend_retry_pending": should_retry,
     }

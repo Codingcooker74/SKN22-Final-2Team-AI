@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from final_ai.application.recommendation.service import serialize_product_card
 from final_ai.contracts.filters import build_search_filters, normalize_search_filters
+from final_ai.domain.recommendation.constants import MAX_FILTER_RELAXATION_COUNT
 from final_ai.infrastructure.search.hybrid_search import normalize_pet_species
 
 from .schemas import RecommendationCase, RecommendationRunResult, RecommendationVariant
@@ -49,7 +50,10 @@ def _snapshot_profile_state(state: dict[str, Any]) -> dict[str, Any]:
 def _snapshot_query_state(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "search_query": state.get("search_query"),
+        "original_filters": normalize_search_filters(state.get("original_filters")),
         "filters": normalize_search_filters(state.get("filters")),
+        "effective_filters": normalize_search_filters(state.get("effective_filters")),
+        "relaxed_filters": list(state.get("relaxed_filters") or []),
         "filter_relaxation_count": int(state.get("filter_relaxation_count") or 0),
     }
 
@@ -92,6 +96,12 @@ def _build_initial_state(case: RecommendationCase) -> dict[str, Any]:
         "is_pet_switched": False,
         "clarification_count": 0,
         "filter_relaxation_count": 0,
+        "recommendation_limit": case.limit,
+        "best_reranked_results": [],
+        "candidate_count_by_stage": {},
+        "effective_filters": {},
+        "original_filters": {},
+        "relaxed_filters": [],
         "is_pet_override": bool(pet_profile),
         "is_result_refinement": bool(case.is_result_refinement),
         "refinement_sort": case.refinement_sort,
@@ -195,16 +205,20 @@ def run_recommendation_case(
             state.update(active_variant.build_profile_state_fn(state))
         result.profile_state = _snapshot_profile_state(state)
 
-        state.update(active_variant.build_search_query_state_fn(state))
-        result.query_state = _snapshot_query_state(state)
-        result.search_query = state.get("search_query")
+        for _ in range(MAX_FILTER_RELAXATION_COUNT + 1):
+            state.update(active_variant.build_search_query_state_fn(state))
+            result.query_state = _snapshot_query_state(state)
+            result.search_query = state.get("search_query")
 
-        state.update(active_variant.execute_search_state_fn(state))
-        search_results = list(state.get("search_results") or [])
-        result.search_results_count = len(search_results)
-        result.search_results_preview = _preview_products(search_results)
+            state.update(active_variant.execute_search_state_fn(state))
+            search_results = list(state.get("search_results") or [])
+            result.search_results_count = len(search_results)
+            result.search_results_preview = _preview_products(search_results)
 
-        state.update(active_variant.rerank_search_results_fn(state))
+            state.update(active_variant.rerank_search_results_fn(state))
+            if not state.get("recommend_retry_pending"):
+                break
+
         reranked_results = list(state.get("reranked_results") or [])
         top_products = reranked_results[: case.limit]
 
