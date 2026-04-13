@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from final_ai.contracts.filters import (
     build_search_exclusions,
@@ -25,6 +25,38 @@ def _serialize_number(value):
     return value
 
 
+def _parse_decimal(value):
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value if value.is_finite() else None
+
+    try:
+        normalized = str(value).strip().replace(",", "")
+        if not normalized or normalized == "-":
+            return None
+        numeric = Decimal(normalized)
+    except (InvalidOperation, ValueError):
+        return None
+
+    return numeric if numeric.is_finite() else None
+
+
+def _serialize_rating(value):
+    numeric = _parse_decimal(value)
+    if numeric is None:
+        return _serialize_number(value)
+    clamped = min(max(numeric, Decimal("0.0")), Decimal("5.0"))
+    return float(clamped.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def _serialize_review_count(value):
+    numeric = _parse_decimal(value)
+    if numeric is None:
+        return _serialize_number(value)
+    return max(int(numeric), 0)
+
+
 def serialize_product_card(product: dict) -> dict:
     return {
         "goods_id": product.get("goods_id"),
@@ -32,8 +64,8 @@ def serialize_product_card(product: dict) -> dict:
         "brand_name": product.get("brand_name"),
         "price": _serialize_number(product.get("price")),
         "discount_price": _serialize_number(product.get("discount_price")),
-        "rating": _serialize_number(product.get("rating")),
-        "reviews": _serialize_number(product.get("review_count")),
+        "rating": _serialize_rating(product.get("rating")),
+        "reviews": _serialize_review_count(product.get("review_count")),
         "thumbnail_url": product.get("thumbnail_url"),
         "product_url": product.get("product_url"),
     }
