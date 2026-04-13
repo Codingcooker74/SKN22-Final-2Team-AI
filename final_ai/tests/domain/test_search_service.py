@@ -173,3 +173,73 @@ class SearchServiceTests(unittest.TestCase):
 
         self.assertEqual(mock_hybrid_search_pg.call_count, 1)
         self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["allowed_goods_ids"], ["GI9"])
+
+    @patch("final_ai.domain.recommendation.search_service.hybrid_search_pg", return_value=[])
+    def test_execute_search_state_passes_structured_exclusions_to_hybrid_search(
+        self,
+        mock_hybrid_search_pg,
+    ):
+        execute_search_state(
+            {
+                "user_input": "브랜드 제외 추천",
+                "search_query": "고양이 사료",
+                "filters": {"pet_type": "고양이", "category": "사료"},
+                "exclusions": {"brands": ["로얄캐닌"], "health_concerns": ["요로"], "goods_ids": ["GI1"]},
+                "pet_profile": {"species": "cat"},
+                "health_concerns": [],
+                "allergies": [],
+                "budget": None,
+                "filter_relaxation_count": 0,
+                "is_result_refinement": False,
+                "allowed_goods_ids": [],
+            }
+        )
+
+        self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["exclude_brands"], ["로얄캐닌"])
+        self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["exclude_health_concerns"], ["요로"])
+        self.assertEqual(mock_hybrid_search_pg.call_args.kwargs["exclude_goods_ids"], ["GI1"])
+
+    @patch(
+        "final_ai.domain.recommendation.search_service.hybrid_search_pg",
+        return_value=[
+            {
+                "goods_id": "GI1",
+                "goods_name": "로얄캐닌 고양이 사료",
+                "brand_name": "로얄캐닌",
+                "category": ["사료"],
+                "subcategory": ["건식사료"],
+                "health_concern_tags": ["요로"],
+                "main_ingredients": ["닭"],
+            },
+            {
+                "goods_id": "GI2",
+                "goods_name": "기타브랜드 고양이 사료",
+                "brand_name": "기타브랜드",
+                "category": ["사료"],
+                "subcategory": ["건식사료"],
+                "health_concern_tags": [],
+                "main_ingredients": ["닭"],
+            },
+        ],
+    )
+    def test_execute_search_state_filters_excluded_candidates_after_search(
+        self,
+        _mock_hybrid_search_pg,
+    ):
+        result = execute_search_state(
+            {
+                "user_input": "브랜드 제외 추천",
+                "search_query": "고양이 사료",
+                "filters": {"pet_type": "고양이", "category": "사료"},
+                "exclusions": {"brands": ["로얄캐닌"]},
+                "pet_profile": {"species": "cat"},
+                "health_concerns": [],
+                "allergies": [],
+                "budget": None,
+                "filter_relaxation_count": 0,
+                "is_result_refinement": False,
+                "allowed_goods_ids": [],
+            }
+        )
+
+        self.assertEqual([item["goods_id"] for item in result["search_results"]], ["GI2"])

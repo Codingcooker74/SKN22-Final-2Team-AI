@@ -108,6 +108,11 @@ def hybrid_search_pg(
     subcategory: str | list[str] | None = None,
     health_concerns: str | list[str] | None = None,
     brand: str | None = None,
+    exclude_brands: str | list[str] | None = None,
+    exclude_categories: str | list[str] | None = None,
+    exclude_subcategories: str | list[str] | None = None,
+    exclude_health_concerns: str | list[str] | None = None,
+    exclude_goods_ids: str | list[str] | None = None,
     budget: int | None = None,
     allowed_goods_ids: list[str] | None = None,
 ) -> list[dict]:
@@ -152,6 +157,11 @@ def hybrid_search_pg(
             subcategory=subcategory,
             health_concerns=health_concerns,
             brand=brand,
+            exclude_brands=exclude_brands,
+            exclude_categories=exclude_categories,
+            exclude_subcategories=exclude_subcategories,
+            exclude_health_concerns=exclude_health_concerns,
+            exclude_goods_ids=exclude_goods_ids,
             budget=budget,
             allowed_goods_ids=allowed_goods_ids,
         )

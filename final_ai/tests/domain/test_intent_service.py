@@ -333,6 +333,132 @@ class IntentServiceTests(unittest.TestCase):
 
     @patch("final_ai.domain.intent.service.get_user_pets", return_value=[])
     @patch("final_ai.domain.intent.service._classify_user_input")
+    def test_classify_intent_moves_excluded_brand_to_exclusions(
+        self,
+        mock_classify_user_input,
+        _mock_get_user_pets,
+    ):
+        mock_classify_user_input.return_value = {
+            "intents": ["recommend"],
+            "pet_type": "고양이",
+            "target_categories": ["사료"],
+            "brand": "로얄캐닌",
+        }
+
+        result = classify_intent(
+            {
+                "user_input": "로얄캐닌 제외하고 고양이 사료 추천해줘",
+                "user_id": None,
+                "intents": [],
+                "filters": {},
+                "exclusions": {},
+                "pet_profile": {},
+                "target_pet_id": None,
+                "pending_requests": [],
+                "decomposed_tasks": [],
+                "health_concerns": [],
+                "allergies": [],
+                "food_preferences": [],
+                "clarification_count": 0,
+                "filter_relaxation_count": 0,
+                "recommend_retry_pending": False,
+                "pet_mismatch": False,
+                "conversation_history": [],
+                "summary_candidates": [],
+                "memory_summary": "",
+            }
+        )
+
+        self.assertEqual(result["filters"]["pet_type"], "고양이")
+        self.assertEqual(result["filters"]["category"], "사료")
+        self.assertNotIn("brand", result["filters"])
+        self.assertEqual(result["exclusions"]["brands"], ["로얄캐닌"])
+
+    @patch("final_ai.domain.intent.service.get_user_pets", return_value=[])
+    @patch("final_ai.domain.intent.service._classify_user_input")
+    def test_classify_intent_excludes_previous_results_for_alternative_request(
+        self,
+        mock_classify_user_input,
+        _mock_get_user_pets,
+    ):
+        mock_classify_user_input.return_value = {
+            "intents": ["unclear"],
+        }
+
+        result = classify_intent(
+            {
+                "user_input": "방금 추천한 거 말고 다른 거 보여줘",
+                "user_id": None,
+                "intents": ["recommend"],
+                "filters": {"pet_type": "고양이", "category": "사료"},
+                "exclusions": {"brands": ["로얄캐닌"]},
+                "pet_profile": {"species": "cat"},
+                "target_pet_id": None,
+                "last_recommended_goods_ids": ["GI1", "GI2"],
+                "pending_requests": [],
+                "decomposed_tasks": [],
+                "health_concerns": [],
+                "allergies": [],
+                "food_preferences": [],
+                "clarification_count": 0,
+                "filter_relaxation_count": 0,
+                "recommend_retry_pending": False,
+                "pet_mismatch": False,
+                "conversation_history": [],
+                "summary_candidates": [],
+                "memory_summary": "",
+            }
+        )
+
+        self.assertEqual(result["intents"], ["recommend"])
+        self.assertFalse(result["is_result_refinement"])
+        self.assertEqual(result["allowed_goods_ids"], [])
+        self.assertEqual(result["exclusions"]["goods_ids"], ["GI1", "GI2"])
+        self.assertEqual(result["exclusions"]["brands"], ["로얄캐닌"])
+
+    @patch("final_ai.domain.intent.service.get_user_pets", return_value=[])
+    @patch("final_ai.domain.intent.service._classify_user_input")
+    def test_classify_intent_extracts_generic_exclusion_keyword_from_text_fallback(
+        self,
+        mock_classify_user_input,
+        _mock_get_user_pets,
+    ):
+        mock_classify_user_input.return_value = {
+            "intents": ["recommend"],
+            "pet_type": "강아지",
+            "target_categories": ["사료"],
+        }
+
+        result = classify_intent(
+            {
+                "user_input": "'그레인프리' 제외하고 강아지 사료 추천해줘",
+                "user_id": None,
+                "intents": [],
+                "filters": {},
+                "exclusions": {},
+                "pet_profile": {},
+                "target_pet_id": None,
+                "pending_requests": [],
+                "decomposed_tasks": [],
+                "health_concerns": [],
+                "allergies": [],
+                "food_preferences": [],
+                "clarification_count": 0,
+                "filter_relaxation_count": 0,
+                "recommend_retry_pending": False,
+                "pet_mismatch": False,
+                "conversation_history": [],
+                "summary_candidates": [],
+                "memory_summary": "",
+            }
+        )
+
+        self.assertEqual(result["filters"]["pet_type"], "강아지")
+        self.assertEqual(result["filters"]["category"], "사료")
+        self.assertEqual(result["exclusions"]["keywords"], ["그레인프리"])
+
+    @patch("final_ai.domain.intent.service.get_user_pets", return_value=[])
+    @patch("final_ai.domain.intent.service._classify_user_input")
     def test_classify_intent_keeps_domain_qa_after_decomposition(
         self,
         mock_classify_user_input,

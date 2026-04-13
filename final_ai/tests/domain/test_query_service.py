@@ -48,3 +48,19 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(core_query["search_query"], "강아지 사료")
         self.assertEqual(core_query["relaxed_filters"], ["health_concern", "subcategory", "age_group", "breed"])
+
+    def test_build_search_query_state_removes_exclusion_terms_from_refinement_query(self):
+        result = build_search_query_state(
+            {
+                "user_input": "로얄캐닌 제외하고 더 싼 거 보여줘",
+                "filters": {"pet_type": "고양이", "category": "사료"},
+                "exclusions": {"brands": ["로얄캐닌"]},
+                "pet_profile": {"species": "cat"},
+                "health_concerns": [],
+                "filter_relaxation_count": 0,
+                "is_result_refinement": True,
+            }
+        )
+
+        self.assertNotIn("로얄캐닌", result["search_query"])
+        self.assertIn("고양이 사료", result["search_query"])

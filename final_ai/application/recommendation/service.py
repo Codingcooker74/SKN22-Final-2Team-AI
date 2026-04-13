@@ -1,6 +1,11 @@
 from decimal import Decimal
 
-from final_ai.contracts.filters import build_search_filters, normalize_search_filters
+from final_ai.contracts.filters import (
+    build_search_exclusions,
+    build_search_filters,
+    normalize_search_exclusions,
+    normalize_search_filters,
+)
 from final_ai.domain.recommendation.profile_service import build_profile_state
 from final_ai.domain.recommendation.query_service import build_search_query_state
 from final_ai.domain.recommendation.rerank_service import rerank_search_results
@@ -61,6 +66,13 @@ def recommend_products(
     health_concerns: list[str] | None = None,
     allergies: list[str] | None = None,
     food_preferences: list[str] | None = None,
+    exclude_brands: list[str] | None = None,
+    exclude_categories: list[str] | None = None,
+    exclude_subcategories: list[str] | None = None,
+    exclude_health_concerns: list[str] | None = None,
+    exclude_ingredients: list[str] | None = None,
+    exclude_keywords: list[str] | None = None,
+    exclude_goods_ids: list[str] | None = None,
     budget: int | None = None,
     limit: int = 5,
 ) -> dict:
@@ -104,6 +116,15 @@ def recommend_products(
         "candidate_count_by_stage": {},
         "effective_filters": {},
         "original_filters": {},
+        "exclusions": build_search_exclusions(
+            brands=exclude_brands,
+            categories=exclude_categories,
+            subcategories=exclude_subcategories,
+            health_concerns=exclude_health_concerns,
+            ingredients=exclude_ingredients,
+            keywords=exclude_keywords,
+            goods_ids=exclude_goods_ids,
+        ),
         "relaxed_filters": [],
         "is_pet_override": bool(pet_profile),
         "pet_mismatch": False,
@@ -133,6 +154,7 @@ def recommend_products(
             "relaxed_filters": state.get("relaxed_filters") or [],
             "original_filters": normalize_search_filters(state.get("original_filters")),
             "effective_filters": normalize_search_filters(state.get("effective_filters")),
+            "exclusions": normalize_search_exclusions(state.get("exclusions")),
             "candidate_count_by_stage": state.get("candidate_count_by_stage") or {},
         },
     }

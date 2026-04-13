@@ -29,7 +29,12 @@ INTENT_SYSTEM = f"""
 - breed: 품종명 / null 
 - brand: 사용자가 특정 브랜드를 명시했으면 브랜드명 / null
 - health_concerns: ["다이어트", "눈물", "관절" 등]
-- exclude_ingredients: ["소고기 없는" 등]
+- exclude_brands: ["로얄캐닌" 등]
+- exclude_categories: ["모래" 등]
+- exclude_subcategories: ["습식사료", "벤토나이트" 등]
+- exclude_health_concerns: ["요로", "체중" 등]
+- exclude_ingredients: ["소고기", "연어" 등]
+- exclude_keywords: 위 항목으로 분류되지 않는 일반 제외 키워드 / []
 - mentioned_pet_names: 언급된 반려동물 이름 리스트 / []
 - is_next_request: 사용자가 "ㅇㅇ", "엉", "다음 것도 보여줘", "응 보여줘", "다른 카테고리는?" 등 대기 중인 다른 펫이나 다음 카테고리의 추천을 요청하는 긍정 답변인 경우 true / false (기본값: false)
 - is_result_refinement: 사용자가 직전 추천 결과를 좁히거나 다시 고르는 후속 요청이면 true / false
@@ -67,6 +72,8 @@ INTENT_SYSTEM = f"""
    -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"price_low"}}
 6. 이전 추천 refinement: "그중에서 인기 많은 거"
    -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"popularity"}}
+7. 제외 조건: "로얄캐닌 제외하고 고양이 사료 추천해줘"
+   -> {{"intents":["recommend"],"pet_type":"고양이","target_categories":["사료"],"exclude_brands":["로얄캐닌"]}}
 
 ### 카테고리 (표준 명칭 가이드)
 {json.dumps(CATEGORIES_FOR_LLM, ensure_ascii=False)}

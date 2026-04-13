@@ -3,7 +3,7 @@ from typing import Annotated
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from final_ai.contracts.filters import SearchFilters
+from final_ai.contracts.filters import SearchExclusions, SearchFilters
 
 
 class ChatState(TypedDict):
@@ -46,6 +46,7 @@ class ChatState(TypedDict):
     refinement_sort: str | None
     search_query: str | None
     filters: SearchFilters
+    exclusions: SearchExclusions
     original_filters: SearchFilters
     breed_context: str | None
     health_traits: str | None
