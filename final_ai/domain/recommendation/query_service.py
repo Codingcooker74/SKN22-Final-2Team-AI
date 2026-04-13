@@ -1,5 +1,11 @@
 from final_ai.contracts.filters import build_search_filters, normalize_search_filters
-from final_ai.domain.recommendation.constants import STRICT_SUBCATEGORIES
+from final_ai.domain.recommendation.filter_relaxation import (
+    build_relaxed_filter_names,
+    clamp_relaxation_count,
+    should_include_health_concerns,
+    should_include_profile_hints,
+    should_include_subcategory,
+)
 from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.infrastructure.observability import get_logger
 from final_ai.graph.state import ChatState
@@ -12,8 +18,8 @@ def build_search_query_state(state: ChatState) -> dict:
     지정된 핵심 정보를 조합하여 검색 쿼리를 생성합니다.
     포함 정보: species(pet_type), breed, category, subcategory, health_concerns, age_group
     """
-    filters = normalize_search_filters(state.get("filters"))
-    relaxation = state.get("filter_relaxation_count", 0)
+    filters = normalize_search_filters(state.get("original_filters") or state.get("filters"))
+    relaxation = clamp_relaxation_count(state.get("filter_relaxation_count", 0))
     pet_profile = state.get("pet_profile") or {}
     brand = filters.get("brand") or ""
 
@@ -34,17 +40,18 @@ def build_search_query_state(state: ChatState) -> dict:
         pet_type = ""
     
     # 품종(breed)
-    breed = pet_profile.get("breed") or ""
+    raw_breed = pet_profile.get("breed") or ""
+    breed = raw_breed if should_include_profile_hints(relaxation) else ""
     
     # 카테고리 / 소분류
     category_hint = filters.get("category") or ""
     raw_sub = filters.get("subcategory") or ""
-    is_strict = raw_sub in STRICT_SUBCATEGORIES if raw_sub else False
-    subcategory_hint = raw_sub if (relaxation == 0 or is_strict) else ""
+    subcategory_hint = raw_sub if should_include_subcategory(relaxation) else ""
 
     # 건강 고민 및 연령대
-    concerns = normalize_health_concerns(state.get("health_concerns") or [])
-    age_group = state.get("age_group") or ""
+    all_concerns = normalize_health_concerns(state.get("health_concerns") or [])
+    concerns = all_concerns if should_include_health_concerns(relaxation) else []
+    age_group = (state.get("age_group") or "") if should_include_profile_hints(relaxation) else ""
 
     # 2. 쿼리 구성 요소 수집 (순서: 종 -> 품종 -> 카테고리 -> 소분류 -> 건강고민 -> 연령대)
     query_parts = []
@@ -92,18 +99,35 @@ def build_search_query_state(state: ChatState) -> dict:
                 search_query = refinement_query
 
     logger.info(
-        "search query built (Deterministic) query=%r relaxation=%s refinement=%s",
+        "search query built (Deterministic) query=%r relaxation=%s relaxed=%s refinement=%s",
         search_query,
         relaxation,
+        build_relaxed_filter_names(
+            relaxation=relaxation,
+            filters=filters,
+            health_concerns=all_concerns,
+            age_group=state.get("age_group"),
+            breed=raw_breed,
+        ),
         bool(state.get("is_result_refinement")),
     )
     
+    effective_filters = build_search_filters(
+        pet_type=pet_type,
+        category=category_hint,
+        subcategory=subcategory_hint,
+        brand=brand,
+    )
     return {
         "search_query": search_query,
-        "filters": build_search_filters(
-            pet_type=pet_type,
-            category=category_hint,
-            subcategory=subcategory_hint,
-            brand=brand,
+        "filters": effective_filters,
+        "original_filters": filters,
+        "effective_filters": effective_filters,
+        "relaxed_filters": build_relaxed_filter_names(
+            relaxation=relaxation,
+            filters=filters,
+            health_concerns=all_concerns,
+            age_group=state.get("age_group"),
+            breed=raw_breed,
         ),
     }

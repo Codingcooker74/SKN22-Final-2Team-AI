@@ -16,7 +16,13 @@ from final_ai.domain.recommendation.constants import (
     PURE_CAN_SUBS,
     PURE_POUCH_SUBS,
     SAMPLE_BLACKLIST_WORDS,
-    STRICT_SUBCATEGORIES,
+)
+from final_ai.domain.recommendation.filter_relaxation import (
+    build_effective_search_filters,
+    build_relaxed_filter_names,
+    clamp_relaxation_count,
+    should_include_health_concerns,
+    should_include_profile_hints,
 )
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
@@ -144,18 +150,16 @@ def _is_safe_candidate(
 
 def execute_search_state(state: ChatState) -> dict:
     query = state.get("search_query") or state["user_input"]
-    filters = normalize_search_filters(state.get("filters"))
-    relaxation = state.get("filter_relaxation_count", 0)
+    original_filters = normalize_search_filters(state.get("original_filters") or state.get("filters"))
+    relaxation = clamp_relaxation_count(state.get("filter_relaxation_count", 0))
+    filters = build_effective_search_filters(original_filters, relaxation=relaxation)
     pet_type = filters.get("pet_type")
     category = filters.get("category")
     subcategory = filters.get("subcategory")
     brand = filters.get("brand")
-    is_strict = subcategory in STRICT_SUBCATEGORIES if subcategory else False
-    if relaxation > 0 and not is_strict:
-        subcategory = None
     budget = state.get("budget")
     health_concerns = normalize_health_concerns(state.get("health_concerns") or [])
-    search_health_concerns = [] if relaxation > 0 else health_concerns
+    search_health_concerns = health_concerns if should_include_health_concerns(relaxation) else []
     allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
     if not allowed_goods_ids and state.get("is_result_refinement"):
         allowed_goods_ids = list(state.get("last_recommended_goods_ids") or [])
@@ -176,8 +180,16 @@ def execute_search_state(state: ChatState) -> dict:
         allowed_goods_ids=allowed_goods_ids,
     )
     logger.info(
-        "search hybrid returned=%s subcategory=%s category=%s pet=%s health=%s allowed_ids=%s refinement=%s",
+        "search hybrid returned=%s relaxation=%s relaxed=%s subcategory=%s category=%s pet=%s health=%s allowed_ids=%s refinement=%s",
         len(candidates),
+        relaxation,
+        build_relaxed_filter_names(
+            relaxation=relaxation,
+            filters=original_filters,
+            health_concerns=health_concerns,
+            age_group=state.get("age_group"),
+            breed=(state.get("pet_profile") or {}).get("breed"),
+        ),
         subcategory,
         category,
         pet_type_kr,
@@ -185,9 +197,6 @@ def execute_search_state(state: ChatState) -> dict:
         len(allowed_goods_ids),
         bool(state.get("is_result_refinement")),
     )
-    if health_concerns and not search_health_concerns:
-        logger.info("search health filter relaxed original_health=%s relaxation=%s", health_concerns, relaxation)
-
     candidates = [
         candidate
         for candidate in candidates
@@ -196,8 +205,10 @@ def execute_search_state(state: ChatState) -> dict:
     logger.debug("blacklist filter count=%s", len(candidates))
 
     target_age_group = state.get("age_group", "어덜트")
-    forbidden_age_keywords = AGE_EXCLUDE_KEYWORDS.get(target_age_group, [])
-    mandatory_keywords = AGE_MANDATORY_KEYWORDS.get(target_age_group, [])
+    if not should_include_profile_hints(relaxation):
+        target_age_group = None
+    forbidden_age_keywords = AGE_EXCLUDE_KEYWORDS.get(target_age_group, []) if target_age_group else []
+    mandatory_keywords = AGE_MANDATORY_KEYWORDS.get(target_age_group, []) if target_age_group else []
     logger.info(
         "search age_group=%s forbidden=%s mandatory=%s",
         target_age_group,
@@ -218,5 +229,27 @@ def execute_search_state(state: ChatState) -> dict:
         )
     ]
 
-    logger.info("search candidates=%s relaxation=%s", len(candidates), relaxation)
-    return {"search_results": candidates}
+    candidate_count_by_stage = dict(state.get("candidate_count_by_stage") or {})
+    candidate_count_by_stage[str(relaxation)] = len(candidates)
+    relaxed_filters = build_relaxed_filter_names(
+        relaxation=relaxation,
+        filters=original_filters,
+        health_concerns=health_concerns,
+        age_group=state.get("age_group"),
+        breed=(state.get("pet_profile") or {}).get("breed"),
+    )
+
+    logger.info(
+        "search candidates=%s relaxation=%s target_age_group=%s relaxed=%s",
+        len(candidates),
+        relaxation,
+        target_age_group,
+        relaxed_filters,
+    )
+    return {
+        "search_results": candidates,
+        "original_filters": original_filters,
+        "effective_filters": filters,
+        "relaxed_filters": relaxed_filters,
+        "candidate_count_by_stage": candidate_count_by_stage,
+    }

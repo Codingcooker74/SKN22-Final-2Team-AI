@@ -5,6 +5,7 @@ from final_ai.domain.recommendation.profile_service import build_profile_state
 from final_ai.domain.recommendation.query_service import build_search_query_state
 from final_ai.domain.recommendation.rerank_service import rerank_search_results
 from final_ai.domain.recommendation.search_service import execute_search_state
+from final_ai.domain.recommendation.constants import MAX_FILTER_RELAXATION_COUNT
 from final_ai.infrastructure.repositories.product_repository import list_products as fetch_products
 from final_ai.infrastructure.search.hybrid_search import hybrid_search_pg, normalize_pet_species
 
@@ -98,13 +99,19 @@ def recommend_products(
         "is_pet_switched": False,
         "clarification_count": 0,
         "filter_relaxation_count": 0,
+        "recommendation_limit": limit,
+        "best_reranked_results": [],
+        "candidate_count_by_stage": {},
+        "effective_filters": {},
+        "original_filters": {},
+        "relaxed_filters": [],
         "is_pet_override": bool(pet_profile),
         "pet_mismatch": False,
     }
 
     state.update(build_profile_state(state))
-    # Initial strict search plus one relaxed retry, matching graph retry behavior.
-    for _ in range(2):
+    # Initial strict search plus staged fallback retries, matching graph retry behavior.
+    for _ in range(MAX_FILTER_RELAXATION_COUNT + 1):
         state.update(build_search_query_state(state))
         state.update(execute_search_state(state))
         state.update(rerank_search_results(state))
@@ -123,6 +130,10 @@ def recommend_products(
             "filter_relaxation_count": state.get("filter_relaxation_count", 0),
             "recommend_retry_pending": bool(state.get("recommend_retry_pending")),
             "pet_mismatch": bool(state.get("pet_mismatch")),
+            "relaxed_filters": state.get("relaxed_filters") or [],
+            "original_filters": normalize_search_filters(state.get("original_filters")),
+            "effective_filters": normalize_search_filters(state.get("effective_filters")),
+            "candidate_count_by_stage": state.get("candidate_count_by_stage") or {},
         },
     }
 

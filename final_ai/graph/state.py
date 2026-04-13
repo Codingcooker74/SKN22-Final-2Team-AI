@@ -46,12 +46,18 @@ class ChatState(TypedDict):
     refinement_sort: str | None
     search_query: str | None
     filters: SearchFilters
+    original_filters: SearchFilters
     breed_context: str | None
     health_traits: str | None
     search_results: list[dict]
     reranked_results: list[dict]
+    best_reranked_results: list[dict]
     filter_relaxation_count: int
     recommend_retry_pending: bool
+    recommendation_limit: int
+    effective_filters: SearchFilters
+    relaxed_filters: list[str]
+    candidate_count_by_stage: dict[str, int]
 
     domain_contexts: list[str]
 
