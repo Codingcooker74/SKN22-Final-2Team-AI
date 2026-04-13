@@ -1,10 +1,29 @@
+from decimal import Decimal
 import unittest
 from unittest.mock import patch
 
-from final_ai.application.recommendation.service import recommend_products
+from final_ai.application.recommendation.service import recommend_products, serialize_product_card
 
 
 class RecommendationServiceTests(unittest.TestCase):
+    def test_serialize_product_card_normalizes_rating_and_review_count(self):
+        product = {
+            "goods_id": "GI1",
+            "goods_name": "강아지 기본 사료 1",
+            "brand_name": "테스트",
+            "price": Decimal("10000"),
+            "discount_price": Decimal("9000"),
+            "rating": Decimal("4.921038021380922"),
+            "review_count": Decimal("24478.0"),
+            "thumbnail_url": "https://example.com/1.jpg",
+            "product_url": "https://example.com/1",
+        }
+
+        serialized = serialize_product_card(product)
+
+        self.assertEqual(serialized["rating"], 4.9)
+        self.assertEqual(serialized["reviews"], 24478)
+
     def test_recommend_products_retries_until_five_products_then_stops(self):
         products = [
             {
@@ -85,5 +104,6 @@ class RecommendationServiceTests(unittest.TestCase):
 
         self.assertEqual(seen_relaxations, [0, 1, 2])
         self.assertEqual([product["goods_id"] for product in result["products"]], ["GI1", "GI2", "GI3", "GI4", "GI5"])
+        self.assertTrue(all(product["rating"] == 5.0 for product in result["products"]))
         self.assertEqual(result["meta"]["filter_relaxation_count"], 2)
         self.assertFalse(result["meta"]["recommend_retry_pending"])
