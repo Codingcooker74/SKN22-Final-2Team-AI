@@ -27,6 +27,20 @@ class ChatGraphTests(unittest.TestCase):
         result = route_intent(state)
 
         self.assertTrue(all(isinstance(item, Send) for item in result))
+        self.assertEqual([item.node for item in result], ["general", "query"])
+
+    def test_route_intent_fans_out_through_profile_when_pet_is_selected(self):
+        state = {
+            "intents": ["domain_qa", "recommend"],
+            "filters": {"pet_type": "강아지", "category": "사료"},
+            "pet_profile": {"species": "dog"},
+            "target_pet_id": "pet-1",
+            "filter_relaxation_count": 0,
+        }
+
+        result = route_intent(state)
+
+        self.assertTrue(all(isinstance(item, Send) for item in result))
         self.assertEqual([item.node for item in result], ["general", "profile"])
 
     def test_route_rerank_returns_query_when_retry_pending(self):

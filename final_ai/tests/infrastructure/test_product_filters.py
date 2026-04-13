@@ -27,12 +27,12 @@ class ProductFilterTests(unittest.TestCase):
             filters,
             [
                 "%s = ANY(pet_type)",
-                "(category && %s::text[] OR subcategory && %s::text[])",
-                "%s = ANY(subcategory)",
+                "(category && %s::varchar[] OR subcategory && %s::varchar[])",
+                "EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)",
                 "price <= %s",
             ],
         )
-        self.assertEqual(params, ["고양이", ["용품", "이동"], ["용품", "이동"], "이동장/캐리어", 50000])
+        self.assertEqual(params, ["고양이", ["용품", "이동"], ["용품", "이동"], "%이동장/캐리어%", 50000])
 
     def test_build_product_filter_clauses_uses_overlap_for_multi_value_subcategory(self):
         filters, params = build_product_filter_clauses(
@@ -43,8 +43,30 @@ class ProductFilterTests(unittest.TestCase):
         self.assertEqual(
             filters,
             [
-                "pet_type && %s::text[]",
-                "subcategory && %s::text[]",
+                "pet_type && %s::varchar[]",
+                "subcategory && %s::varchar[]",
             ],
         )
         self.assertEqual(params, [["고양이", "강아지"], ["이동장/캐리어", "스크래쳐/캣타워"]])
+
+    def test_build_product_filter_clauses_uses_varchar_overlap_for_multi_health_concerns(self):
+        filters, params = build_product_filter_clauses(
+            pet_type="강아지",
+            category="사료",
+            health_concerns=["관절", "피부"],
+        )
+
+        self.assertEqual(
+            filters,
+            [
+                "%s = ANY(pet_type)",
+                (
+                    "("
+                    "EXISTS (SELECT 1 FROM unnest(category) c WHERE c ILIKE %s) OR "
+                    "EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)"
+                    ")"
+                ),
+                "health_concern_tags && %s::varchar[]",
+            ],
+        )
+        self.assertEqual(params, ["강아지", "%사료%", "%사료%", ["관절", "피부"]])
