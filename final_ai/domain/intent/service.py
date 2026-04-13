@@ -64,6 +64,18 @@ _ALTERNATIVE_RECOMMENDATION_TOKENS = (
     "빼고다른",
 )
 
+_RECOMMENDATION_SIGNAL_TOKENS = (
+    "추천",
+    "추천해줘",
+    "추천해주세요",
+    "보여줘",
+    "보여주세요",
+    "찾아줘",
+    "찾아주세요",
+    "골라줘",
+    "골라주세요",
+)
+
 _EXCLUSION_FALLBACK_STOPWORDS = {
     "강아지",
     "고양이",
@@ -102,6 +114,13 @@ def _has_exclusion_signal(text: str | None) -> bool:
     if not normalized:
         return False
     return any(token in normalized for token in _EXCLUSION_TOKENS)
+
+
+def _has_recommendation_signal(text: str | None) -> bool:
+    normalized = _normalize_compact_text(text)
+    if not normalized:
+        return False
+    return any(token in normalized for token in _RECOMMENDATION_SIGNAL_TOKENS)
 
 
 def _is_alternative_recommendation_request(
@@ -255,6 +274,15 @@ def _resolve_category_subcategory(
                         found_sub = canonical
                         found_cat = cat_name
 
+    # 2. 카테고리 직접 매칭 (서브카테고리보다 후순위)
+    if not found_cat:
+        for cat_name, cat_info in pet_category_map.items():
+            targets = [cat_name] + (cat_info.get("aliases") or [])
+            for target in targets:
+                if target in combined_text and len(target) > best_match_len:
+                    best_match_len = len(target)
+                    found_cat = cat_name
+
     # 매칭된 결과가 있다면 업데이트, 없으면 LLM 제안값 유지
     final_sub = found_sub if found_sub else subcategory
     final_cat = found_cat if found_cat else category
@@ -267,6 +295,35 @@ def _resolve_category_subcategory(
                 break
                 
     return final_cat, final_sub
+
+
+def _resolve_category_subcategory_any_pet(
+    *,
+    text_to_search: str,
+    category: str | None,
+    subcategory: str | None,
+    pet_type_kr: str | None,
+) -> tuple[str | None, str | None]:
+    candidate_pet_types = [pet_type_kr] if pet_type_kr in CATEGORIES else list(CATEGORIES.keys())
+
+    best_cat = category
+    best_sub = subcategory
+    best_score = max(len(str(subcategory or "")), len(str(category or "")))
+
+    for candidate_pet_type in candidate_pet_types:
+        resolved_cat, resolved_sub = _resolve_category_subcategory(
+            text_to_search=text_to_search,
+            category=category,
+            subcategory=subcategory,
+            pet_type_kr=candidate_pet_type,
+        )
+        score = max(len(str(resolved_sub or "")), len(str(resolved_cat or "")))
+        if score > best_score:
+            best_score = score
+            best_cat = resolved_cat
+            best_sub = resolved_sub
+
+    return best_cat, best_sub
 
 
 def _build_context(
@@ -498,6 +555,15 @@ def classify_intent(state: ChatState) -> dict:
     is_pet_switched = False
     switched_pet_name = None
     overridden_metadata = {}
+
+    category_lookup_pet_type = explicit_pet_type
+    if not category_lookup_pet_type:
+        if prev_pet.get("species") == "dog":
+            category_lookup_pet_type = "강아지"
+        elif prev_pet.get("species") == "cat":
+            category_lookup_pet_type = "고양이"
+        else:
+            category_lookup_pet_type = prev_filters.get("pet_type")
     
     # 펫 타입 결정
     temp_pet = dict(prev_pet)
@@ -505,6 +571,21 @@ def classify_intent(state: ChatState) -> dict:
         if explicit_pet_type:
             temp_pet["species"] = "dog" if explicit_pet_type == "강아지" else "cat"
     pet_type_kr = "고양이" if (temp_pet.get("species") == "cat" or explicit_pet_type == "고양이") else "강아지"
+
+    fallback_category, fallback_subcategory = _resolve_category_subcategory_any_pet(
+        text_to_search=original_user_input,
+        category=target_categories[0] if target_categories else None,
+        subcategory=normalize_filter_value(result.get("subcategory")),
+        pet_type_kr=category_lookup_pet_type,
+    )
+    if not target_categories and fallback_category:
+        target_categories = [fallback_category]
+    if not result.get("subcategory") and fallback_subcategory:
+        result["subcategory"] = fallback_subcategory
+
+    if target_categories and _has_recommendation_signal(original_user_input) and "recommend" not in new_intents:
+        new_intents = [intent for intent in new_intents if intent != "unclear"]
+        new_intents.append("recommend")
 
     resolved_exclude_categories = []
     for raw_category in exclude_categories:
@@ -668,11 +749,11 @@ def classify_intent(state: ChatState) -> dict:
     detected_sub = normalize_filter_value(result.get("subcategory"))
 
     if "recommend" in new_intents:
-        detected_cat, detected_sub = _resolve_category_subcategory(
+        detected_cat, detected_sub = _resolve_category_subcategory_any_pet(
             text_to_search=current_user_input,
             category=detected_cat,
             subcategory=detected_sub,
-            pet_type_kr=pet_type_kr
+            pet_type_kr=category_lookup_pet_type or pet_type_kr,
         )
 
     # 필터 적용
