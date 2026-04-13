@@ -4,7 +4,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 
 from final_ai.contracts.chat import ChatRequest
-from final_ai.contracts.filters import normalize_search_filters
+from final_ai.contracts.filters import normalize_search_exclusions, normalize_search_filters
 from final_ai.domain.profile.health_concerns import normalize_health_concerns
 
 
@@ -78,6 +78,7 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "recommendation_limit": 5,
         "effective_filters": {},
         "original_filters": {},
+        "exclusions": normalize_search_exclusions(dialog_state.get("exclusions")),
         "relaxed_filters": [],
         "candidate_count_by_stage": {},
         "filters": normalize_search_filters(dialog_state.get("filters")),

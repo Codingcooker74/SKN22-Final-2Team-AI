@@ -4,9 +4,13 @@ import re
 from final_ai.api.dependencies.request_context import ensure_request_active
 from final_ai.application.chat.memory import format_conversation_history
 from final_ai.contracts.filters import (
+    SearchExclusions,
     SearchFilters,
+    build_search_exclusions,
     build_search_filters,
+    normalize_filter_list,
     normalize_filter_value,
+    normalize_search_exclusions,
     normalize_search_filters,
 )
 from final_ai.domain.intent.prompts import CATEGORIES, build_intent_prompt
@@ -40,6 +44,153 @@ _RESULT_REFINEMENT_TOKENS = (
     "방금추천한것중",
     "위에나온것중",
 )
+
+_EXCLUSION_TOKENS = (
+    "제외",
+    "빼고",
+    "빼줘",
+    "말고",
+    "삭제",
+    "제거",
+    "없는",
+)
+
+_ALTERNATIVE_RECOMMENDATION_TOKENS = (
+    "다른거",
+    "다른걸로",
+    "다른상품",
+    "딴거",
+    "말고다른",
+    "빼고다른",
+)
+
+_EXCLUSION_FALLBACK_STOPWORDS = {
+    "강아지",
+    "고양이",
+    "사료",
+    "간식",
+    "상품",
+    "추천",
+    "추천해줘",
+    "추천해주세요",
+    "보여줘",
+    "알려줘",
+    "다른",
+    "거",
+}
+
+
+def _normalize_compact_text(text: object) -> str:
+    return re.sub(r"\s+", "", str(text or "")).lower()
+
+
+def _merge_unique_terms(*values: object) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for item in normalize_filter_list(value):
+            normalized = _normalize_compact_text(item)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(item)
+    return merged
+
+
+def _has_exclusion_signal(text: str | None) -> bool:
+    normalized = _normalize_compact_text(text)
+    if not normalized:
+        return False
+    return any(token in normalized for token in _EXCLUSION_TOKENS)
+
+
+def _is_alternative_recommendation_request(
+    text: str | None,
+    *,
+    previous_goods_ids: list[str] | None,
+) -> bool:
+    if not previous_goods_ids:
+        return False
+    normalized = _normalize_compact_text(text)
+    if not normalized or "다른카테고리" in normalized:
+        return False
+    return any(token in normalized for token in _ALTERNATIVE_RECOMMENDATION_TOKENS)
+
+
+def _extract_exclusion_keywords_from_text(text: str | None) -> list[str]:
+    raw = str(text or "")
+    if not raw or not _has_exclusion_signal(raw):
+        return []
+
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(candidate: str):
+        normalized = normalize_filter_value(candidate)
+        if not normalized or normalized in _EXCLUSION_FALLBACK_STOPWORDS or len(normalized) < 2:
+            return
+        compact = _normalize_compact_text(normalized)
+        if compact in seen:
+            return
+        seen.add(compact)
+        found.append(normalized)
+
+    for match in re.finditer(r"[\"']([^\"']{2,30})[\"']\s*(?:제외|빼고|말고|삭제|제거|없는)", raw):
+        add_candidate(match.group(1))
+
+    if found:
+        return found
+
+    for match in re.finditer(r"([0-9A-Za-z가-힣/]+)\s*(?:은|는|이|가|을|를)?\s*(?:제외|빼고|말고|삭제|제거|없는)", raw):
+        add_candidate(match.group(1))
+
+    return found
+
+
+def _merge_search_exclusions(*values: SearchExclusions | None) -> SearchExclusions:
+    return build_search_exclusions(
+        brands=_merge_unique_terms(*(value.get("brands") if value else [] for value in values)),
+        categories=_merge_unique_terms(*(value.get("categories") if value else [] for value in values)),
+        subcategories=_merge_unique_terms(*(value.get("subcategories") if value else [] for value in values)),
+        health_concerns=_merge_unique_terms(*(value.get("health_concerns") if value else [] for value in values)),
+        ingredients=_merge_unique_terms(*(value.get("ingredients") if value else [] for value in values)),
+        keywords=_merge_unique_terms(*(value.get("keywords") if value else [] for value in values)),
+        goods_ids=_merge_unique_terms(*(value.get("goods_ids") if value else [] for value in values)),
+    )
+
+
+def _prune_conflicting_exclusions(filters: SearchFilters, exclusions: SearchExclusions) -> SearchExclusions:
+    pruned = normalize_search_exclusions(exclusions)
+    include_brand = normalize_filter_value(filters.get("brand"))
+    include_category = normalize_filter_value(filters.get("category"))
+    include_subcategory = normalize_filter_value(filters.get("subcategory"))
+
+    def remove_match(values: list[str] | None, target: str | None) -> list[str]:
+        if not values or not target:
+            return list(values or [])
+        target_normalized = _normalize_compact_text(target)
+        return [value for value in values if _normalize_compact_text(value) != target_normalized]
+
+    if "brands" in pruned:
+        next_values = remove_match(pruned.get("brands"), include_brand)
+        if next_values:
+            pruned["brands"] = next_values
+        else:
+            pruned.pop("brands", None)
+    if "categories" in pruned:
+        next_values = remove_match(pruned.get("categories"), include_category)
+        if next_values:
+            pruned["categories"] = next_values
+        else:
+            pruned.pop("categories", None)
+    if "subcategories" in pruned:
+        next_values = remove_match(pruned.get("subcategories"), include_subcategory)
+        if next_values:
+            pruned["subcategories"] = next_values
+        else:
+            pruned.pop("subcategories", None)
+
+    return pruned
 
 
 def _infer_pet_type_from_text(text: str | None) -> str | None:
@@ -177,6 +328,7 @@ def classify_intent(state: ChatState) -> dict:
     user_id = state.get("user_id")
     prev_intents = state.get("intents") or []
     prev_filters = normalize_search_filters(state.get("filters"))
+    prev_exclusions = normalize_search_exclusions(state.get("exclusions"))
     prev_pet = state.get("pet_profile") or {}
     target_pet_id = state.get("target_pet_id")
     prev_last_recommended_goods_ids = list(state.get("last_recommended_goods_ids") or [])
@@ -228,7 +380,12 @@ def classify_intent(state: ChatState) -> dict:
     # [추가] AI 질문(강아지/고양이?) 내의 단어가 이름으로 오인되는 것 방지
     mentioned_names = [name for name in mentioned_names if name.strip() not in ["강아지", "고양이", "dog", "cat"]]
     
-    exclude_ingredients = result.get("exclude_ingredients") or []
+    exclude_brands = normalize_filter_list(result.get("exclude_brands"))
+    exclude_categories = normalize_filter_list(result.get("exclude_categories"))
+    exclude_subcategories = normalize_filter_list(result.get("exclude_subcategories"))
+    exclude_health_concerns_raw = normalize_filter_list(result.get("exclude_health_concerns"))
+    exclude_ingredients = normalize_filter_list(result.get("exclude_ingredients"))
+    exclude_keywords = normalize_filter_list(result.get("exclude_keywords"))
     raw_health_concerns = result.get("health_concerns") or []
     target_categories = result.get("target_categories") or []
     detected_brand = normalize_filter_value(result.get("brand"))
@@ -236,14 +393,31 @@ def classify_intent(state: ChatState) -> dict:
     is_explicit_pet_info = bool(explicit_pet_type or result.get("breed"))
     new_decomposed_tasks = result.get("decomposed_tasks") or []
     refinement_sort = normalize_filter_value(result.get("refinement_sort"))
+    is_alternative_request = _is_alternative_recommendation_request(
+        original_user_input,
+        previous_goods_ids=prev_last_recommended_goods_ids,
+    )
     llm_result_refinement = result.get("is_result_refinement")
     if isinstance(llm_result_refinement, bool):
-        is_result_refinement = llm_result_refinement
+        is_result_refinement = llm_result_refinement and not is_alternative_request
     else:
         is_result_refinement = _is_result_refinement_request(
             original_user_input,
             previous_goods_ids=prev_last_recommended_goods_ids,
-        )
+        ) and not is_alternative_request
+
+    if detected_brand and _has_exclusion_signal(original_user_input):
+        exclude_brands = _merge_unique_terms(exclude_brands, [detected_brand])
+        detected_brand = None
+    if not (
+        exclude_brands
+        or exclude_categories
+        or exclude_subcategories
+        or exclude_health_concerns_raw
+        or exclude_ingredients
+        or exclude_keywords
+    ):
+        exclude_keywords = _extract_exclusion_keywords_from_text(original_user_input)
 
     if new_decomposed_tasks:
         logger.info("─── Query Decomposition Detected ───")
@@ -289,6 +463,7 @@ def classify_intent(state: ChatState) -> dict:
         return detected
 
     detected_health_concerns = map_health_concerns(raw_health_concerns)
+    detected_excluded_health_concerns = map_health_concerns(exclude_health_concerns_raw)
 
     has_structured_followup_signal = bool(
         mentioned_names
@@ -298,10 +473,16 @@ def classify_intent(state: ChatState) -> dict:
         or result.get("age")
         or target_categories
         or detected_health_concerns
+        or exclude_brands
+        or exclude_categories
+        or exclude_subcategories
+        or detected_excluded_health_concerns
         or exclude_ingredients
+        or exclude_keywords
         or result.get("subcategory")
         or result.get("budget")
         or is_result_refinement
+        or is_alternative_request
     )
 
     if new_intents == ["unclear"] and "recommend" in prev_intents and has_structured_followup_signal:
@@ -324,6 +505,26 @@ def classify_intent(state: ChatState) -> dict:
         if explicit_pet_type:
             temp_pet["species"] = "dog" if explicit_pet_type == "강아지" else "cat"
     pet_type_kr = "고양이" if (temp_pet.get("species") == "cat" or explicit_pet_type == "고양이") else "강아지"
+
+    resolved_exclude_categories = []
+    for raw_category in exclude_categories:
+        resolved_category, _ = _resolve_category_subcategory(
+            text_to_search=raw_category,
+            category=raw_category,
+            subcategory=None,
+            pet_type_kr=pet_type_kr,
+        )
+        resolved_exclude_categories.append(resolved_category or raw_category)
+
+    resolved_exclude_subcategories = []
+    for raw_subcategory in exclude_subcategories:
+        _, resolved_subcategory = _resolve_category_subcategory(
+            text_to_search=raw_subcategory,
+            category=None,
+            subcategory=raw_subcategory,
+            pet_type_kr=pet_type_kr,
+        )
+        resolved_exclude_subcategories.append(resolved_subcategory or raw_subcategory)
 
     # ── [중요] decomposed_tasks 개별 보정 로직 ──
     if new_decomposed_tasks and "recommend" in new_intents:
@@ -496,7 +697,7 @@ def classify_intent(state: ChatState) -> dict:
         del new_filters["subcategory"]
 
     logger.info(
-        "intent classified original_input=%s normalized_input=%s intents=%s pet=%s filters=%s decomposed_count=%s refinement=%s allowed_ids=%s",
+        "intent classified original_input=%s normalized_input=%s intents=%s pet=%s filters=%s exclusions=%s decomposed_count=%s refinement=%s allowed_ids=%s",
         original_user_input,
         current_user_input,
         new_intents,
@@ -507,17 +708,38 @@ def classify_intent(state: ChatState) -> dict:
             subcategory=new_filters.get("subcategory"),
             brand=new_filters.get("brand"),
         ),
+        build_search_exclusions(
+            brands=exclude_brands,
+            categories=resolved_exclude_categories,
+            subcategories=resolved_exclude_subcategories,
+            health_concerns=detected_excluded_health_concerns,
+            ingredients=exclude_ingredients,
+            keywords=exclude_keywords,
+            goods_ids=prev_last_recommended_goods_ids if is_alternative_request else [],
+        ),
         len(decomposed_tasks),
         is_result_refinement,
         len(prev_last_recommended_goods_ids),
     )
 
-    combined_allergies = list(
-        set((overridden_metadata.get("allergies") or state.get("allergies") or []) + exclude_ingredients)
-    )
+    combined_allergies = _merge_unique_terms(overridden_metadata.get("allergies") or state.get("allergies") or [])
 
     current_health_concerns = overridden_metadata.get("health_concerns") or state.get("health_concerns") or []
-    combined_health_concerns = list(set(current_health_concerns + detected_health_concerns))
+    combined_health_concerns = _merge_unique_terms(current_health_concerns, detected_health_concerns)
+    base_exclusions = prev_exclusions if (is_result_refinement or is_alternative_request) else {}
+    detected_exclusions = build_search_exclusions(
+        brands=exclude_brands,
+        categories=resolved_exclude_categories,
+        subcategories=resolved_exclude_subcategories,
+        health_concerns=detected_excluded_health_concerns,
+        ingredients=exclude_ingredients,
+        keywords=exclude_keywords,
+        goods_ids=prev_last_recommended_goods_ids if is_alternative_request else [],
+    )
+    combined_exclusions = _prune_conflicting_exclusions(
+        new_filters,
+        _merge_search_exclusions(base_exclusions, detected_exclusions),
+    )
 
     return {
         "original_user_input": original_user_input,
@@ -542,6 +764,7 @@ def classify_intent(state: ChatState) -> dict:
             subcategory=new_filters.get("subcategory"),
             brand=new_filters.get("brand"),
         ),
+        "exclusions": combined_exclusions,
         "pet_profile": new_pet,
         "is_pet_override": is_explicit_pet_info or is_pet_switched,
         "pet_mismatch": False if is_pet_switched else state.get("pet_mismatch", False),

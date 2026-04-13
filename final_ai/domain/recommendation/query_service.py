@@ -1,4 +1,10 @@
-from final_ai.contracts.filters import build_search_filters, normalize_search_filters
+import re
+
+from final_ai.contracts.filters import (
+    build_search_filters,
+    normalize_search_exclusions,
+    normalize_search_filters,
+)
 from final_ai.domain.recommendation.filter_relaxation import (
     build_relaxed_filter_names,
     clamp_relaxation_count,
@@ -13,12 +19,32 @@ from final_ai.graph.state import ChatState
 logger = get_logger(__name__)
 
 
+def _sanitize_refinement_query(raw_query: str, exclusions: dict[str, list[str]]) -> str:
+    sanitized = str(raw_query or "").strip()
+    if not sanitized:
+        return ""
+
+    terms: list[str] = []
+    for key in ("brands", "categories", "subcategories", "health_concerns", "ingredients", "keywords"):
+        terms.extend(exclusions.get(key) or [])
+
+    for term in sorted({term.strip() for term in terms if str(term or "").strip()}, key=len, reverse=True):
+        sanitized = re.sub(re.escape(term), " ", sanitized, flags=re.IGNORECASE)
+
+    for token in ("제외", "빼고", "빼줘", "말고", "삭제", "제거", "없는", "다른 거", "다른걸로", "다른상품"):
+        sanitized = sanitized.replace(token, " ")
+
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    return sanitized
+
+
 def build_search_query_state(state: ChatState) -> dict:
     """
     지정된 핵심 정보를 조합하여 검색 쿼리를 생성합니다.
     포함 정보: species(pet_type), breed, category, subcategory, health_concerns, age_group
     """
     filters = normalize_search_filters(state.get("original_filters") or state.get("filters"))
+    exclusions = normalize_search_exclusions(state.get("exclusions"))
     relaxation = clamp_relaxation_count(state.get("filter_relaxation_count", 0))
     pet_profile = state.get("pet_profile") or {}
     brand = filters.get("brand") or ""
@@ -91,7 +117,7 @@ def build_search_query_state(state: ChatState) -> dict:
         search_query = " ".join(query_parts).strip()
 
     if state.get("is_result_refinement"):
-        refinement_query = (state.get("user_input") or "").strip()
+        refinement_query = _sanitize_refinement_query(state.get("user_input") or "", exclusions)
         if refinement_query:
             if search_query:
                 search_query = f"{refinement_query} {search_query}".strip()

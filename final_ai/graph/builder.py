@@ -179,6 +179,7 @@ def chat(
         "recommendation_limit": 5,
         "effective_filters": {},
         "original_filters": {},
+        "exclusions": {},
         "relaxed_filters": [],
         "candidate_count_by_stage": {},
         "refinement_sort": None,

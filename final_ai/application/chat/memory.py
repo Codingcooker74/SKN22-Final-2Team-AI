@@ -1,6 +1,6 @@
 import json
 
-from final_ai.contracts.filters import normalize_search_filters
+from final_ai.contracts.filters import normalize_search_exclusions, normalize_search_filters
 from final_ai.infrastructure.llm.openai_client import LLM_MODEL, llm
 from final_ai.infrastructure.observability import get_logger
 
@@ -19,6 +19,7 @@ MEMORY_DIALOG_STATE_KEYS = (
     "health_concerns",
     "allergies",
     "food_preferences",
+    "exclusions",
     "is_pet_override",
     "pet_mismatch",
     "detected_aspect",
@@ -74,6 +75,9 @@ def extract_dialog_state(state: dict) -> dict:
     for key in MEMORY_DIALOG_STATE_KEYS:
         if key == "filters":
             dialog_state["filters"] = normalize_search_filters(state.get("filters"))
+            continue
+        if key == "exclusions":
+            dialog_state["exclusions"] = normalize_search_exclusions(state.get("exclusions"))
             continue
         value = state.get(key)
         if key in {

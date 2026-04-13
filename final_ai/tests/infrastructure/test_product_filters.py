@@ -70,3 +70,34 @@ class ProductFilterTests(unittest.TestCase):
             ],
         )
         self.assertEqual(params, ["강아지", "%사료%", "%사료%", ["관절", "피부"]])
+
+    def test_build_product_filter_clauses_supports_exclusion_filters(self):
+        filters, params = build_product_filter_clauses(
+            pet_type="고양이",
+            category="사료",
+            exclude_brands=["로얄캐닌"],
+            exclude_subcategories=["습식사료"],
+            exclude_health_concerns=["요로"],
+            exclude_goods_ids=["GI1", "GI2"],
+        )
+
+        self.assertEqual(
+            filters,
+            [
+                "%s = ANY(pet_type)",
+                (
+                    "("
+                    "EXISTS (SELECT 1 FROM unnest(category) c WHERE c ILIKE %s) OR "
+                    "EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)"
+                    ")"
+                ),
+                "brand_name NOT ILIKE %s",
+                "NOT EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)",
+                "NOT (%s = ANY(health_concern_tags))",
+                "NOT (goods_id = ANY(%s::text[]))",
+            ],
+        )
+        self.assertEqual(
+            params,
+            ["고양이", "%사료%", "%사료%", "%로얄캐닌%", "%습식사료%", "요로", ["GI1", "GI2"]],
+        )

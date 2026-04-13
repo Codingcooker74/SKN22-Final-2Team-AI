@@ -34,6 +34,11 @@ def build_product_filter_clauses(
     subcategory: FilterValue = None,
     health_concerns: FilterValue = None,
     brand: str | None = None,
+    exclude_brands: FilterValue = None,
+    exclude_categories: FilterValue = None,
+    exclude_subcategories: FilterValue = None,
+    exclude_health_concerns: FilterValue = None,
+    exclude_goods_ids: FilterValue = None,
     budget: int | None = None,
     allowed_goods_ids: list[str] | None = None,
 ) -> tuple[list[str], list[object]]:
@@ -44,6 +49,11 @@ def build_product_filter_clauses(
     categories = normalize_filter_values(category)
     subcategories = normalize_filter_values(subcategory)
     concerns = normalize_filter_values(health_concerns)
+    excluded_brands = normalize_filter_values(exclude_brands)
+    excluded_categories = normalize_filter_values(exclude_categories)
+    excluded_subcategories = normalize_filter_values(exclude_subcategories)
+    excluded_concerns = normalize_filter_values(exclude_health_concerns)
+    excluded_goods = normalize_filter_values(exclude_goods_ids)
 
     if pet_types:
         if len(pet_types) == 1:
@@ -89,6 +99,40 @@ def build_product_filter_clauses(
     if brand:
         filters.append("brand_name ILIKE %s")
         params.append(f"%{brand}%")
+
+    for excluded_brand in excluded_brands:
+        filters.append("brand_name NOT ILIKE %s")
+        params.append(f"%{excluded_brand}%")
+
+    for excluded_category in excluded_categories:
+        category_pattern = f"%{excluded_category}%"
+        filters.append(
+            "NOT ("
+            "EXISTS (SELECT 1 FROM unnest(category) c WHERE c ILIKE %s) OR "
+            "EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)"
+            ")"
+        )
+        params.extend([category_pattern, category_pattern])
+
+    for excluded_subcategory in excluded_subcategories:
+        filters.append("NOT EXISTS (SELECT 1 FROM unnest(subcategory) s WHERE s ILIKE %s)")
+        params.append(f"%{excluded_subcategory}%")
+
+    if excluded_concerns:
+        if len(excluded_concerns) == 1:
+            filters.append("NOT (%s = ANY(health_concern_tags))")
+            params.append(excluded_concerns[0])
+        else:
+            filters.append("NOT (health_concern_tags && %s::varchar[])")
+            params.append(excluded_concerns)
+
+    if excluded_goods:
+        if len(excluded_goods) == 1:
+            filters.append("goods_id <> %s")
+            params.append(excluded_goods[0])
+        else:
+            filters.append("NOT (goods_id = ANY(%s::text[]))")
+            params.append(excluded_goods)
 
     if budget is not None:
         filters.append("price <= %s")

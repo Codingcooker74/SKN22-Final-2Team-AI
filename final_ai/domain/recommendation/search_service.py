@@ -2,7 +2,7 @@ import ast
 import json
 import unicodedata
 
-from final_ai.contracts.filters import normalize_search_filters
+from final_ai.contracts.filters import normalize_search_exclusions, normalize_search_filters
 from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.domain.recommendation.constants import (
     AGE_EXCLUDE_KEYWORDS,
@@ -91,6 +91,72 @@ def _to_normalized_list(raw) -> list[str]:
     return [_normalize_text(str(value)) for value in raw]
 
 
+def _is_excluded_candidate(candidate: dict, *, exclusions: dict[str, list[str]]) -> bool:
+    if not exclusions:
+        return False
+
+    goods_id = str(candidate.get("goods_id") or "")
+    if goods_id and goods_id in set(str(value) for value in exclusions.get("goods_ids") or []):
+        return True
+
+    goods_name = _normalize_text(candidate.get("goods_name"))
+    brand_name = _normalize_text(candidate.get("brand_name"))
+    ingredient_ocr = _normalize_text(candidate.get("ingredient_text_ocr"))
+    sub_list = _to_normalized_list(candidate.get("subcategory") or [])
+    cat_list = _to_normalized_list(candidate.get("category") or [])
+    product_tags = _to_normalized_list(candidate.get("health_concern_tags") or [])
+
+    main_ingredients = candidate.get("main_ingredients") or []
+    if isinstance(main_ingredients, str):
+        try:
+            main_ingredients = json.loads(main_ingredients)
+        except Exception:
+            main_ingredients = [main_ingredients]
+    normalized_main_ingredients = [_normalize_text(ingredient) for ingredient in main_ingredients]
+
+    searchable_fields = [
+        goods_name,
+        brand_name,
+        ingredient_ocr,
+        *cat_list,
+        *sub_list,
+        *product_tags,
+        *normalized_main_ingredients,
+    ]
+
+    for brand in exclusions.get("brands") or []:
+        brand_term = _normalize_text(brand)
+        if brand_term and (brand_term in brand_name or brand_term in goods_name):
+            return True
+
+    for category in exclusions.get("categories") or []:
+        category_term = _normalize_text(category)
+        if category_term and any(category_term in value for value in [*cat_list, *sub_list]):
+            return True
+
+    for subcategory in exclusions.get("subcategories") or []:
+        subcategory_term = _normalize_text(subcategory)
+        if subcategory_term and any(subcategory_term in value for value in sub_list):
+            return True
+
+    for concern in exclusions.get("health_concerns") or []:
+        concern_term = _normalize_text(concern)
+        if concern_term and any(concern_term in value for value in product_tags):
+            return True
+
+    for ingredient in exclusions.get("ingredients") or []:
+        ingredient_term = _normalize_text(ingredient)
+        if ingredient_term and any(ingredient_term in value for value in [goods_name, ingredient_ocr, *normalized_main_ingredients]):
+            return True
+
+    for keyword in exclusions.get("keywords") or []:
+        keyword_term = _normalize_text(keyword)
+        if keyword_term and any(keyword_term in value for value in searchable_fields):
+            return True
+
+    return False
+
+
 def _is_safe_candidate(
     candidate: dict,
     *,
@@ -151,6 +217,7 @@ def _is_safe_candidate(
 def execute_search_state(state: ChatState) -> dict:
     query = state.get("search_query") or state["user_input"]
     original_filters = normalize_search_filters(state.get("original_filters") or state.get("filters"))
+    exclusions = normalize_search_exclusions(state.get("exclusions"))
     relaxation = clamp_relaxation_count(state.get("filter_relaxation_count", 0))
     filters = build_effective_search_filters(original_filters, relaxation=relaxation)
     pet_type = filters.get("pet_type")
@@ -176,6 +243,11 @@ def execute_search_state(state: ChatState) -> dict:
         subcategory=subcategory,
         health_concerns=search_health_concerns,
         brand=brand,
+        exclude_brands=exclusions.get("brands"),
+        exclude_categories=exclusions.get("categories"),
+        exclude_subcategories=exclusions.get("subcategories"),
+        exclude_health_concerns=exclusions.get("health_concerns"),
+        exclude_goods_ids=exclusions.get("goods_ids"),
         budget=budget,
         allowed_goods_ids=allowed_goods_ids,
     )
@@ -201,6 +273,11 @@ def execute_search_state(state: ChatState) -> dict:
         candidate
         for candidate in candidates
         if not any(word in candidate.get("goods_name", "") for word in SAMPLE_BLACKLIST_WORDS)
+    ]
+    candidates = [
+        candidate
+        for candidate in candidates
+        if not _is_excluded_candidate(candidate, exclusions=exclusions)
     ]
     logger.debug("blacklist filter count=%s", len(candidates))
 

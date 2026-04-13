@@ -61,6 +61,7 @@ class ChatExecutionRequestTests(unittest.TestCase):
             dialog_state={
                 "intents": ["recommend"],
                 "filters": {"pet_type": "강아지", "category": "사료"},
+                "exclusions": {"brands": ["로얄캐닌"]},
                 "clarification_count": 2,
                 "last_recommended_goods_ids": ["A1", "A2"],
                 "is_result_refinement": True,
@@ -81,6 +82,7 @@ class ChatExecutionRequestTests(unittest.TestCase):
         self.assertEqual(execution.initial_state["last_compacted_message_id"], "m-0")
         self.assertEqual(execution.initial_state["intents"], ["recommend"])
         self.assertEqual(execution.initial_state["filters"], {"pet_type": "강아지", "category": "사료"})
+        self.assertEqual(execution.initial_state["exclusions"], {"brands": ["로얄캐닌"]})
         self.assertEqual(execution.initial_state["clarification_count"], 2)
         self.assertEqual(execution.initial_state["last_recommended_goods_ids"], ["A1", "A2"])
         self.assertTrue(execution.initial_state["is_result_refinement"])
@@ -285,6 +287,7 @@ class ChatMemoryPayloadTests(unittest.TestCase):
             ],
             "intents": ["recommend"],
             "filters": {"pet_type": "고양이", "category": "사료"},
+            "exclusions": {"brands": ["로얄캐닌"]},
             "clarification_count": 1,
             "last_recommended_goods_ids": ["GI1", "GI2"],
         }
@@ -301,6 +304,7 @@ class ChatMemoryPayloadTests(unittest.TestCase):
             "- 닭고기 알레르기를 고려한 고양이 사료를 반복적으로 찾고 있음",
         )
         self.assertEqual(payload["dialog_state"]["last_recommended_goods_ids"], ["GI1", "GI2"])
+        self.assertEqual(payload["dialog_state"]["exclusions"], {"brands": ["로얄캐닌"]})
         self.assertEqual(payload["last_compacted_message_id"], "m-2")
 
 
