@@ -1,4 +1,4 @@
-name: FastAPI Test EB CI/CD
+name: FastAPI Deploy EB CI/CD
 
 on:
   pull_request:
@@ -30,14 +30,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-eb-deploy-fastapi-develop
+  group: deploy-eb-fastapi-develop
   cancel-in-progress: true
 
 env:
   AWS_REGION: ap-northeast-2
-  FASTAPI_IMAGE_REPO: 027099020675.dkr.ecr.ap-northeast-2.amazonaws.com/test-tailtalk-fastapi
-  FASTAPI_EB_APP_NAME: test-tailtalk-fastapi
-  FASTAPI_EB_ENV_NAME: test-tailtalk-fastapi-env
+  FASTAPI_IMAGE_REPO: 027099020675.dkr.ecr.ap-northeast-2.amazonaws.com/deploy-tailtalk-fastapi
+  FASTAPI_EB_APP_NAME: deploy-tailtalk-fastapi
+  FASTAPI_EB_ENV_NAME: deploy-tailtalk-fastapi-env
   FASTAPI_INTERNAL_TARGET_GROUP_NAME: tailtalk-fastapi-int-tg
 
 jobs:
@@ -101,7 +101,7 @@ jobs:
           curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-connrefused http://127.0.0.1/health
 
   deploy-fastapi:
-    name: CD - FastAPI Test EB
+    name: CD - FastAPI Deploy EB
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: ci
