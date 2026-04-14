@@ -11,3 +11,5 @@ docs/
 test/
 tests/
 final_ai/tests/
+pyrightconfig.json
+test_pet_switch.py
