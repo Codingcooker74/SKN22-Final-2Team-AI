@@ -10,7 +10,7 @@ on:
       - develop
     paths:
       - ".github/workflows/ci-cd.yml"
-      - "deploy/eb/test-fastapi/**"
+      - "deploy/eb/deploy-fastapi/**"
       - "Dockerfile"
       - "requirements.txt"
       - "main.py"
@@ -20,7 +20,7 @@ on:
       - develop
     paths:
       - ".github/workflows/ci-cd.yml"
-      - "deploy/eb/test-fastapi/**"
+      - "deploy/eb/deploy-fastapi/**"
       - "Dockerfile"
       - "requirements.txt"
       - "main.py"
@@ -78,7 +78,7 @@ jobs:
           mkdir -p .deploy-fastapi
           python3 - <<'PY'
           from pathlib import Path
-          src = Path("deploy/eb/test-fastapi/docker-compose.yml").read_text()
+          src = Path("deploy/eb/deploy-fastapi/docker-compose.yml").read_text()
           Path(".deploy-fastapi/docker-compose.yml").write_text(
               src.replace("__FASTAPI_IMAGE__", "tailtalk-fastapi:ci")
           )
@@ -91,7 +91,7 @@ jobs:
           POSTGRES_PORT=5432
           OPENAI_API_KEY=test-key
           EOF
-          cp -r deploy/eb/test-fastapi/.platform .deploy-fastapi/.platform
+          cp -r deploy/eb/deploy-fastapi/.platform .deploy-fastapi/.platform
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
           test -f .deploy-fastapi/.platform/hooks/prebuild/01_ecr_login.sh
           test -f .deploy-fastapi/.platform/confighooks/prebuild/01_ecr_login.sh
