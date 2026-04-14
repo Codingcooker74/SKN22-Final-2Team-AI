@@ -62,5 +62,6 @@ class ChatState(TypedDict):
 
     domain_contexts: list[str]
 
+    response_mode: str
     response: str
     product_cards: list[dict]

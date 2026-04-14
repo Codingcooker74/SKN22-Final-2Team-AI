@@ -9,8 +9,17 @@ logger = get_logger(__name__)
 def merge_node(state: ChatState) -> dict:
     domain_contexts = state.get("domain_contexts") or []
     reranked_results = state.get("reranked_results") or []
+    intents = state.get("intents") or []
+    has_domain = "domain_qa" in intents
+    has_recommend = "recommend" in intents or "popularity" in intents
 
-    if domain_contexts and reranked_results:
+    if has_domain and has_recommend:
+        mode = "combined"
+    elif has_domain:
+        mode = "domain_qa"
+    elif has_recommend:
+        mode = "recommend"
+    elif domain_contexts and reranked_results:
         mode = "combined"
     elif domain_contexts:
         mode = "domain_qa"
@@ -29,6 +38,7 @@ def merge_node(state: ChatState) -> dict:
     ]
 
     return {
+        "response_mode": mode,
         "product_cards": product_cards,
         "last_recommended_goods_ids": last_recommended_goods_ids or list(state.get("last_recommended_goods_ids") or []),
     }

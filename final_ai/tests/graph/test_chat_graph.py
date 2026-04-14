@@ -3,6 +3,7 @@ import unittest
 from langgraph.types import Send
 
 from final_ai.graph.builder import build_graph, route_intent, route_profile_node, route_rerank
+from final_ai.graph.nodes.merge_node import merge_node
 
 
 class ChatGraphTests(unittest.TestCase):
@@ -72,6 +73,33 @@ class ChatGraphTests(unittest.TestCase):
         }
 
         self.assertEqual(route_profile_node(state), "merge")
+
+    def test_merge_node_sets_domain_qa_response_mode_from_intent(self):
+        result = merge_node(
+            {
+                "intents": ["domain_qa"],
+                "domain_contexts": ["초콜릿은 강아지에게 위험할 수 있습니다."],
+                "reranked_results": [],
+                "last_recommended_goods_ids": ["old-1"],
+            }
+        )
+
+        self.assertEqual(result["response_mode"], "domain_qa")
+        self.assertEqual(result["product_cards"], [])
+        self.assertEqual(result["last_recommended_goods_ids"], ["old-1"])
+
+    def test_merge_node_sets_combined_response_mode_from_intents(self):
+        result = merge_node(
+            {
+                "intents": ["domain_qa", "recommend"],
+                "domain_contexts": ["피부 관리 설명"],
+                "reranked_results": [{"goods_id": "A1", "goods_name": "테스트 사료"}],
+                "last_recommended_goods_ids": [],
+            }
+        )
+
+        self.assertEqual(result["response_mode"], "combined")
+        self.assertEqual(result["last_recommended_goods_ids"], ["A1"])
 
     def test_build_graph_returns_compiled_graph(self):
         self.assertEqual(type(build_graph()).__name__, "CompiledStateGraph")

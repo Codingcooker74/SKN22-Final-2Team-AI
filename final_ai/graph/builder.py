@@ -180,6 +180,7 @@ def chat(
         "best_reranked_results": [],
         "domain_contexts": [],
         "product_cards": [],
+        "response_mode": "",
         "filter_relaxation_count": 0,
         "recommend_retry_pending": False,
         "recommendation_limit": 5,
