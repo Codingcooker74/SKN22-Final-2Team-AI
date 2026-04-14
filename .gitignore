@@ -3,3 +3,11 @@ __pycache__/
 .env
 .venv/*
 .venv
+
+# Non-operational content
+before/
+docs/
+.test-deploy/
+test/
+tests/
+final_ai/tests/
