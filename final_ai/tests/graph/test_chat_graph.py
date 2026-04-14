@@ -2,7 +2,7 @@ import unittest
 
 from langgraph.types import Send
 
-from final_ai.graph.builder import build_graph, route_intent, route_rerank
+from final_ai.graph.builder import build_graph, route_intent, route_profile_node, route_rerank
 
 
 class ChatGraphTests(unittest.TestCase):
@@ -48,6 +48,30 @@ class ChatGraphTests(unittest.TestCase):
             route_rerank({"reranked_results": [], "filter_relaxation_count": 0, "recommend_retry_pending": True}),
             "query",
         )
+
+    def test_route_profile_node_merges_domain_only_intent(self):
+        state = {
+            "intents": ["domain_qa"],
+            "pet_mismatch": False,
+        }
+
+        self.assertEqual(route_profile_node(state), "merge")
+
+    def test_route_profile_node_continues_for_recommend_intent(self):
+        state = {
+            "intents": ["recommend"],
+            "pet_mismatch": False,
+        }
+
+        self.assertEqual(route_profile_node(state), "query")
+
+    def test_route_profile_node_merges_pet_mismatch(self):
+        state = {
+            "intents": ["recommend"],
+            "pet_mismatch": True,
+        }
+
+        self.assertEqual(route_profile_node(state), "merge")
 
     def test_build_graph_returns_compiled_graph(self):
         self.assertEqual(type(build_graph()).__name__, "CompiledStateGraph")

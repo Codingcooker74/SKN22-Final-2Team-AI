@@ -74,6 +74,17 @@ def route_rerank(state: ChatState) -> str:
     return "merge"
 
 
+def route_profile_node(state: ChatState) -> str:
+    if state.get("pet_mismatch"):
+        return "merge"
+
+    intents = state.get("intents") or []
+    has_recommend = "recommend" in intents or "popularity" in intents
+    if not has_recommend:
+        return "merge"
+    return "query"
+
+
 def build_graph(checkpointer=None):
     graph_builder = StateGraph(ChatState)
 
@@ -104,11 +115,6 @@ def build_graph(checkpointer=None):
     graph_builder.add_edge("clarify", END)
     graph_builder.add_edge("general", "rag")
     graph_builder.add_edge("rag", "merge")
-
-    def route_profile_node(state: ChatState):
-        if state.get("pet_mismatch"):
-            return "merge"
-        return "query"
 
     graph_builder.add_conditional_edges(
         "profile",
