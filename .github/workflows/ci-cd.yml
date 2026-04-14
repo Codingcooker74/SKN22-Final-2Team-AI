@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-eb-fastapi-develop
+  group: test-eb-deploy-fastapi-develop
   cancel-in-progress: true
 
 env:
@@ -72,18 +72,18 @@ jobs:
           docker run --rm tailtalk-fastapi:ci \
             python -c "from fastapi.testclient import TestClient; import main; client = TestClient(main.app); resp = client.get('/health'); assert resp.status_code == 200, resp.text"
 
-      - name: Validate test compose bundle
+      - name: Validate deploy compose bundle
         run: |
-          rm -rf .test-fastapi
-          mkdir -p .test-fastapi
+          rm -rf .deploy-fastapi
+          mkdir -p .deploy-fastapi
           python3 - <<'PY'
           from pathlib import Path
           src = Path("deploy/eb/test-fastapi/docker-compose.yml").read_text()
-          Path(".test-fastapi/docker-compose.yml").write_text(
+          Path(".deploy-fastapi/docker-compose.yml").write_text(
               src.replace("__FASTAPI_IMAGE__", "tailtalk-fastapi:ci")
           )
           PY
-          cat <<'EOF' > .test-fastapi/.env
+          cat <<'EOF' > .deploy-fastapi/.env
           POSTGRES_DB=test_db
           POSTGRES_USER=test_user
           POSTGRES_PASSWORD=test_password
@@ -91,17 +91,17 @@ jobs:
           POSTGRES_PORT=5432
           OPENAI_API_KEY=test-key
           EOF
-          cp -r deploy/eb/test-fastapi/.platform .test-fastapi/.platform
-          docker compose -f .test-fastapi/docker-compose.yml --env-file .test-fastapi/.env config -q
-          test -f .test-fastapi/.platform/hooks/prebuild/01_ecr_login.sh
-          test -f .test-fastapi/.platform/confighooks/prebuild/01_ecr_login.sh
-          trap 'docker compose -f .test-fastapi/docker-compose.yml --env-file .test-fastapi/.env down -v --remove-orphans' EXIT
-          docker compose -f .test-fastapi/docker-compose.yml --env-file .test-fastapi/.env up -d
+          cp -r deploy/eb/test-fastapi/.platform .deploy-fastapi/.platform
+          docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env config -q
+          test -f .deploy-fastapi/.platform/hooks/prebuild/01_ecr_login.sh
+          test -f .deploy-fastapi/.platform/confighooks/prebuild/01_ecr_login.sh
+          trap 'docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env down -v --remove-orphans' EXIT
+          docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env up -d
           sleep 5
           curl --fail --silent --show-error --retry 12 --retry-delay 5 --retry-connrefused http://127.0.0.1/health
 
-  test-fastapi:
-    name: CD - FastAPI Test EB
+  deploy-fastapi:
+    name: CD - FastAPI Deploy EB
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: ci
@@ -222,17 +222,17 @@ jobs:
 
       - name: Create FastAPI deployment bundle
         run: |
-          rm -rf .test-fastapi fastapi-test.zip
-          mkdir -p .test-fastapi
+          rm -rf .deploy-fastapi fastapi-deploy.zip
+          mkdir -p .deploy-fastapi
           python3 - <<'PY'
           from pathlib import Path
           src = Path("deploy/eb/test-fastapi/docker-compose.yml").read_text()
           image = "${{ env.FASTAPI_IMAGE_REPO }}:${{ steps.fastapi-meta.outputs.short_sha }}"
-          Path(".test-fastapi/docker-compose.yml").write_text(
+          Path(".deploy-fastapi/docker-compose.yml").write_text(
               src.replace("__FASTAPI_IMAGE__", image)
           )
           PY
-          cat <<'EOF' > .test-fastapi/.env.check
+          cat <<'EOF' > .deploy-fastapi/.env.check
           POSTGRES_DB=check_db
           POSTGRES_USER=check_user
           POSTGRES_PASSWORD=check_password
@@ -254,12 +254,12 @@ jobs:
           FASTEMBED_AUTO_DISABLE_LOW_MEMORY=true
           FASTAPI_UVICORN_WORKERS=1
           EOF
-          docker compose -f .test-fastapi/docker-compose.yml --env-file .test-fastapi/.env.check config -q
-          cp -r deploy/eb/test-fastapi/.platform .test-fastapi/.platform
-          cd .test-fastapi
-          zip -r ../fastapi-test.zip docker-compose.yml .platform
+          docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env.check config -q
+          cp -r deploy/eb/test-fastapi/.platform .deploy-fastapi/.platform
+          cd .deploy-fastapi
+          zip -r ../fastapi-deploy.zip docker-compose.yml .platform
 
-      - name: Deploy FastAPI to Test Elastic Beanstalk
+      - name: Deploy FastAPI to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v22
         with:
           aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -268,7 +268,7 @@ jobs:
           application_name: ${{ env.FASTAPI_EB_APP_NAME }}
           environment_name: ${{ env.FASTAPI_EB_ENV_NAME }}
           version_label: ${{ steps.fastapi-meta.outputs.version_label }}
-          deployment_package: fastapi-test.zip
+          deployment_package: fastapi-deploy.zip
           use_existing_version_if_available: true
           wait_for_deployment: true
 
