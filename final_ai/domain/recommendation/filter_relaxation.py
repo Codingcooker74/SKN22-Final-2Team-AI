@@ -72,7 +72,7 @@ def target_recommendation_count(state: dict[str, Any]) -> int:
     target = max(1, min(MIN_RECOMMENDATION_RESULTS, requested_limit))
     allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
     if not allowed_goods_ids and state.get("is_result_refinement"):
-        allowed_goods_ids = list(state.get("last_recommended_goods_ids") or [])
+        allowed_goods_ids = list(state.get("last_search_goods_ids") or [])
     if allowed_goods_ids:
         target = min(target, len(set(str(goods_id) for goods_id in allowed_goods_ids)))
     return target

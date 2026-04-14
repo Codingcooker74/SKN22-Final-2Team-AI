@@ -16,14 +16,97 @@ from final_ai.graph.state import ChatState
 logger = get_logger(__name__)
 
 
-def _build_context_block(domain_contexts: list[str], reranked_results: list[dict]) -> str:
+def _format_budget_amount(amount: int | None) -> str | None:
+    if amount is None:
+        return None
+    if amount % 10000 == 0:
+        return f"{amount // 10000}만원"
+    return f"{amount:,}원"
+
+
+def _build_recommendation_shortage_note(state: ChatState) -> str:
+    reranked_results = list(state.get("reranked_results") or [])
+    try:
+        target_count = int(state.get("recommendation_limit") or 5)
+    except (TypeError, ValueError):
+        target_count = 5
+
+    if not reranked_results or len(reranked_results) >= target_count:
+        return ""
+
+    min_budget = _format_budget_amount(state.get("min_budget"))
+    max_budget = _format_budget_amount(state.get("budget"))
+
+    if min_budget and max_budget:
+        condition = f"{min_budget} 이상 {max_budget} 이하"
+    elif min_budget:
+        condition = f"{min_budget} 이상"
+    elif max_budget:
+        condition = f"{max_budget} 이하"
+    else:
+        condition = "현재 추가 조건"
+
+    return (
+        f"{condition} 조건을 만족하는 상품이 {len(reranked_results)}개만 확인되어 "
+        "해당 상품만 보여드리고 있다고 안내하세요."
+    )
+
+
+def _build_candidate_reason(
+    product: dict,
+    *,
+    requested_category: str,
+    translated_concerns: list[str],
+) -> str:
+    reasons: list[str] = []
+
+    if requested_category and requested_category != "상품":
+        product_categories = [
+            *[str(value) for value in product.get("category") or []],
+            *[str(value) for value in product.get("subcategory") or []],
+        ]
+        if any(requested_category in value for value in product_categories):
+            reasons.append(f"{requested_category} 조건과 맞아요")
+
+    product_tags = [str(value) for value in product.get("health_concern_tags") or []]
+    matched_concerns = [concern for concern in translated_concerns if concern in product_tags]
+    if matched_concerns:
+        reasons.append(f"{', '.join(matched_concerns[:2])} 관심사와 맞아요")
+
+    review_count = product.get("review_count")
+    rating = product.get("rating")
+    if review_count and rating:
+        reasons.append(f"평점 {rating} / 리뷰 {review_count}건을 확인했어요")
+    elif review_count:
+        reasons.append(f"리뷰 {review_count}건이 쌓여 있어요")
+    elif rating:
+        reasons.append(f"평점 {rating} 상품이에요")
+
+    brand_name = str(product.get("brand_name") or "").strip()
+    if not reasons and brand_name:
+        reasons.append(f"{brand_name} 브랜드 상품이에요")
+
+    if not reasons:
+        reasons.append("현재 요청 조건과 검색 결과를 함께 반영했어요")
+
+    return " / ".join(reasons[:2])
+
+
+def _build_context_block(
+    domain_contexts: list[str],
+    reranked_results: list[dict],
+    *,
+    requested_category: str,
+    translated_concerns: list[str],
+) -> str:
     context_parts = []
     if domain_contexts:
         domain_context_block = "\n\n".join(domain_contexts[:2])
         context_parts.append(f"[도메인 지식]\n{domain_context_block}")
     if reranked_results:
         products_info = "\n".join(
-            f"- {product.get('brand_name')} {product.get('goods_name')}"
+            f"- {product.get('brand_name')} {product.get('goods_name')} | 선택 이유: "
+            f"{_build_candidate_reason(product, requested_category=requested_category, translated_concerns=translated_concerns)}"
             for product in reranked_results[:3]
         )
         context_parts.append(f"[추천 상품 후보]\n{products_info}")
@@ -73,6 +156,7 @@ def _build_user_message(
     memory_summary: str,
     summary_candidates_text: str,
     conversation_history_text: str,
+    recommendation_shortage_note: str,
 ) -> str:
     # 다음 대기 항목 정보 구성
     if pending_info:
@@ -102,6 +186,7 @@ def _build_user_message(
         f"- 카테고리: {category}\n"
         f"- 등록된 건강 관심사: {', '.join(translated_concerns) if translated_concerns else '없음'}\n"
         f"- 건강 특징: {health_traits}\n"
+        f"- 추천 부족 안내: {recommendation_shortage_note or '없음'}\n"
         f"- 전체 펫 정보: {pet_context}\n\n"
         f"누적 대화 요약:\n{memory_summary or '없음'}\n\n"
         f"이번 턴에 메모리로 편입할 이전 대화:\n{summary_candidates_text}\n\n"
@@ -119,11 +204,18 @@ def _build_fallback_response(
     domain_contexts: list[str],
     response_mode: str,
     error: Exception,
+    recommendation_shortage_note: str,
 ) -> str:
     if response_mode == "domain_qa":
         response = "관련 정보를 찾았지만 답변 생성 중 문제가 발생했습니다. 초콜릿 섭취나 독성 의심처럼 긴급할 수 있는 상황이라면 즉시 동물병원에 연락해 주세요."
     elif reranked_results:
         response = f"{pet_name}에 어울리는 {category} 후보를 찾았어요.\n\n추천 상품을 확인해 주세요!"
+        if recommendation_shortage_note:
+            response = (
+                f"{pet_name}에 어울리는 {category} 후보를 찾았어요.\n\n"
+                f"{recommendation_shortage_note.split('라고 안내하세요.')[0]}.\n\n"
+                "추천 상품을 확인해 주세요!"
+            )
     elif domain_contexts:
         response = "관련 정보를 찾았지만 답변 생성 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
     else:
@@ -156,10 +248,16 @@ def build_response_state(state: ChatState) -> dict:
     category = filters.get("category") or "상품"
     health_traits = state.get("health_traits") or "특별한 데이터가 없습니다."
     translated_concerns = translate_health_concerns(health_concerns)
+    recommendation_shortage_note = _build_recommendation_shortage_note(state)
     pending_info = _get_pending_info(state)
-    context_block = _build_context_block(domain_contexts, reranked_results)
     summary_candidates_text = format_conversation_history(state.get("summary_candidates"), limit=8)
     conversation_history_text = format_conversation_history(state.get("conversation_history"), limit=10)
+    context_block = _build_context_block(
+        domain_contexts,
+        reranked_results,
+        requested_category=category,
+        translated_concerns=translated_concerns,
+    )
     user_message = _build_user_message(
         state=state,
         pet_name=pet_name,
@@ -173,6 +271,7 @@ def build_response_state(state: ChatState) -> dict:
         memory_summary=(state.get("memory_summary") or "").strip(),
         summary_candidates_text=summary_candidates_text,
         conversation_history_text=conversation_history_text,
+        recommendation_shortage_note=recommendation_shortage_note,
     )
     system_prompt = select_respond_system_prompt(response_mode)
 
@@ -194,6 +293,7 @@ def build_response_state(state: ChatState) -> dict:
             domain_contexts=domain_contexts,
             response_mode=response_mode,
             error=exc,
+            recommendation_shortage_note=recommendation_shortage_note,
         )
 
     logger.info("response generated preview=%s", response[:80])

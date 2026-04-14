@@ -17,6 +17,7 @@ class ChatState(TypedDict):
     user_id: str | None
     target_pet_id: str | None
     last_recommended_goods_ids: list[str]
+    last_search_goods_ids: list[str]
     allowed_goods_ids: list[str]
     # 분해된 하위 작업 리스트 (Query Decomposition 결과물)
     # 형식: [{"pet_name": "초코", "category": "사료", "health_concern": "체중", "age": "노령"}, ...]
@@ -39,6 +40,7 @@ class ChatState(TypedDict):
     clarification_count: int
     detected_aspect: str | None
     budget: int | None
+    min_budget: int | None
     is_pet_override: bool
     pet_mismatch: bool
 

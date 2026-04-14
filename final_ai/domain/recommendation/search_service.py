@@ -85,6 +85,29 @@ def _normalize_text(text) -> str:
     return unicodedata.normalize("NFC", str(text)).lower().replace(" ", "")
 
 
+def _effective_price(candidate: dict) -> float | None:
+    for key in ("discount_price", "price"):
+        value = candidate.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _matches_budget(candidate: dict, *, min_budget: int | None, budget: int | None) -> bool:
+    effective_price = _effective_price(candidate)
+    if effective_price is None:
+        return False
+    if min_budget is not None and effective_price < float(min_budget):
+        return False
+    if budget is not None and effective_price > float(budget):
+        return False
+    return True
+
+
 def _to_normalized_list(raw) -> list[str]:
     if isinstance(raw, str):
         return [_normalize_text(value) for value in raw.replace("{", "").replace("}", "").split(",")]
@@ -224,12 +247,13 @@ def execute_search_state(state: ChatState) -> dict:
     category = filters.get("category")
     subcategory = filters.get("subcategory")
     brand = filters.get("brand")
+    min_budget = state.get("min_budget")
     budget = state.get("budget")
     health_concerns = normalize_health_concerns(state.get("health_concerns") or [])
     search_health_concerns = health_concerns if should_include_health_concerns(relaxation) else []
     allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
     if not allowed_goods_ids and state.get("is_result_refinement"):
-        allowed_goods_ids = list(state.get("last_recommended_goods_ids") or [])
+        allowed_goods_ids = list(state.get("last_search_goods_ids") or [])
 
     pet_type_kr = normalize_pet_species(pet_type)
     if not pet_type_kr:
@@ -248,9 +272,16 @@ def execute_search_state(state: ChatState) -> dict:
         exclude_subcategories=exclusions.get("subcategories"),
         exclude_health_concerns=exclusions.get("health_concerns"),
         exclude_goods_ids=exclusions.get("goods_ids"),
+        min_budget=min_budget,
         budget=budget,
         allowed_goods_ids=allowed_goods_ids,
     )
+    if min_budget is not None or budget is not None:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if _matches_budget(candidate, min_budget=min_budget, budget=budget)
+        ]
     logger.info(
         "search hybrid returned=%s relaxation=%s relaxed=%s subcategory=%s category=%s pet=%s health=%s allowed_ids=%s refinement=%s",
         len(candidates),
@@ -325,6 +356,11 @@ def execute_search_state(state: ChatState) -> dict:
     )
     return {
         "search_results": candidates,
+        "last_search_goods_ids": [
+            str(candidate.get("goods_id"))
+            for candidate in candidates
+            if candidate.get("goods_id") is not None
+        ],
         "original_filters": original_filters,
         "effective_filters": filters,
         "relaxed_filters": relaxed_filters,

@@ -15,6 +15,7 @@ MEMORY_DIALOG_STATE_KEYS = (
     "pending_categories",
     "target_pet_id",
     "last_recommended_goods_ids",
+    "last_search_goods_ids",
     "pet_profile",
     "health_concerns",
     "allergies",
@@ -25,6 +26,7 @@ MEMORY_DIALOG_STATE_KEYS = (
     "detected_aspect",
     "refinement_sort",
     "budget",
+    "min_budget",
     "filter_relaxation_count",
     "recommend_retry_pending",
     "decomposed_tasks",
@@ -90,6 +92,7 @@ def extract_dialog_state(state: dict) -> dict:
             "decomposed_tasks",
             "pending_requests",
             "last_recommended_goods_ids",
+            "last_search_goods_ids",
         }:
             dialog_state[key] = list(value or [])
             continue

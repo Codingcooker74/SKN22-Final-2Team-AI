@@ -43,6 +43,10 @@ INTENT_SYSTEM = f"""
 - refinement_sort: refinement 시 다시 정렬할 기준 / null
   - 허용값: "price_low", "price_high", "popularity", "rating", "review_count", null
   - 예: "더 싼 거" -> "price_low", "더 비싼 거" -> "price_high", "인기 많은 거" -> "popularity"
+- budget: 최대 가격 상한 / null
+  - 예: "3만원 이하", "5만 원 미만", "2만원까지" -> 30000 / 50000 / 20000
+- min_budget: 최소 가격 하한 / null
+  - 예: "3만원 이상", "5만 원 넘는", "10만원 초과" -> 30000 / 50000 / 100000
 
 ### Query Decomposition (복합 질문 분해 - 매우 중요)
 사용자가 여러 마리의 펫이나 여러 상품군을 복합적으로 요청한 경우, 이를 **순서대로 빠짐없이** 독립된 작업 리스트(`decomposed_tasks`)로 분해하세요.
@@ -69,11 +73,15 @@ INTENT_SYSTEM = f"""
 4. 별칭 변환: "강아지 껌 추천해줘"
    -> {{"intents":["recommend"],"pet_type":"강아지","target_categories":["간식"],"subcategory":"덴탈껌"}}
 5. 이전 추천 refinement: "이 중에서 더 싼 거로 보여줘"
-   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"price_low"}}
+   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"price_low","budget":null,"min_budget":null}}
 6. 이전 추천 refinement: "그중에서 인기 많은 거"
-   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"popularity"}}
+   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"refinement_sort":"popularity","budget":null,"min_budget":null}}
 7. 제외 조건: "로얄캐닌 제외하고 고양이 사료 추천해줘"
-   -> {{"intents":["recommend"],"pet_type":"고양이","target_categories":["사료"],"exclude_brands":["로얄캐닌"]}}
+   -> {{"intents":["recommend"],"pet_type":"고양이","target_categories":["사료"],"exclude_brands":["로얄캐닌"],"budget":null,"min_budget":null}}
+8. 가격 상한 refinement: "추천된 것 중 3만원 이하만 보여줘"
+   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"budget":30000,"min_budget":null}}
+9. 가격 하한 refinement: "그중에서 5만원 이상만 보여줘"
+   -> {{"intents":["recommend"],"target_categories":[],"is_result_refinement":true,"budget":null,"min_budget":50000}}
 
 ### 카테고리 (표준 명칭 가이드)
 {json.dumps(CATEGORIES_FOR_LLM, ensure_ascii=False)}

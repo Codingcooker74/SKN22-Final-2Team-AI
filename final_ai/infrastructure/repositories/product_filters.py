@@ -39,6 +39,7 @@ def build_product_filter_clauses(
     exclude_subcategories: FilterValue = None,
     exclude_health_concerns: FilterValue = None,
     exclude_goods_ids: FilterValue = None,
+    min_budget: int | None = None,
     budget: int | None = None,
     allowed_goods_ids: list[str] | None = None,
 ) -> tuple[list[str], list[object]]:
@@ -134,8 +135,14 @@ def build_product_filter_clauses(
             filters.append("NOT (goods_id = ANY(%s::text[]))")
             params.append(excluded_goods)
 
+    effective_price_sql = "COALESCE(NULLIF(discount_price, 0), price)"
+
+    if min_budget is not None:
+        filters.append(f"{effective_price_sql} >= %s")
+        params.append(min_budget)
+
     if budget is not None:
-        filters.append("price <= %s")
+        filters.append(f"{effective_price_sql} <= %s")
         params.append(budget)
 
     if allowed_goods_ids:

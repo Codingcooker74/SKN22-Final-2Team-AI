@@ -55,6 +55,7 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "user_id": req.user_id or dialog_state.get("user_id"),
         "target_pet_id": resolved_target_pet_id,
         "last_recommended_goods_ids": list(dialog_state.get("last_recommended_goods_ids") or []),
+        "last_search_goods_ids": list(dialog_state.get("last_search_goods_ids") or []),
         "allowed_goods_ids": [],
         "pet_profile": req.pet_profile if req.pet_profile is not None else dict(dialog_state.get("pet_profile") or {}),
         "health_concerns": normalize_health_concerns(
@@ -72,6 +73,10 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "recommend_retry_pending": bool(dialog_state.get("recommend_retry_pending")),
         "is_result_refinement": bool(dialog_state.get("is_result_refinement")),
         "refinement_sort": dialog_state.get("refinement_sort"),
+        "budget": dialog_state.get("budget"),
+        "min_budget": dialog_state.get("min_budget"),
+        "detected_aspect": dialog_state.get("detected_aspect"),
+        "domain_intent": dialog_state.get("domain_intent"),
         "is_pet_override": bool(dialog_state.get("is_pet_override")),
         "pet_mismatch": bool(dialog_state.get("pet_mismatch")),
         "best_reranked_results": [],
@@ -82,6 +87,9 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "relaxed_filters": [],
         "candidate_count_by_stage": {},
         "filters": normalize_search_filters(dialog_state.get("filters")),
+        "breed_context": dialog_state.get("breed_context"),
+        "health_traits": dialog_state.get("health_traits"),
+        "age_group": dialog_state.get("age_group"),
         "response_mode": "",
     }
     return ChatExecutionRequest(
