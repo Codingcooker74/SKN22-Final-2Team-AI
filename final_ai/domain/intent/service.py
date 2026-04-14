@@ -76,6 +76,16 @@ _RECOMMENDATION_SIGNAL_TOKENS = (
     "골라주세요",
 )
 
+_BUDGET_UNDER_PATTERNS = (
+    r"(\d+(?:\.\d+)?)\s*만\s*원?\s*(?:이하|미만|까지|안쪽|선)",
+    r"(\d+(?:\.\d+)?)\s*원\s*(?:이하|미만|까지|안쪽|선)",
+)
+
+_BUDGET_OVER_PATTERNS = (
+    r"(\d+(?:\.\d+)?)\s*만\s*원?\s*(?:이상|초과|넘는|부터)",
+    r"(\d+(?:\.\d+)?)\s*원\s*(?:이상|초과|넘는|부터)",
+)
+
 _EXCLUSION_FALLBACK_STOPWORDS = {
     "강아지",
     "고양이",
@@ -237,6 +247,39 @@ def _is_result_refinement_request(
     return any(token in normalized for token in _RESULT_REFINEMENT_TOKENS)
 
 
+def _parse_budget_amount(text: str, *, is_manwon: bool) -> int | None:
+    try:
+        amount = float(text)
+    except (TypeError, ValueError):
+        return None
+    return int(amount * (10000 if is_manwon else 1))
+
+
+def _extract_budget_constraints(text: str | None) -> tuple[int | None, int | None]:
+    raw = str(text or "")
+    min_budget = None
+    max_budget = None
+
+    for pattern in _BUDGET_UNDER_PATTERNS:
+        match = re.search(pattern, raw)
+        if match:
+            max_budget = _parse_budget_amount(match.group(1), is_manwon="만" in pattern)
+            break
+
+    for pattern in _BUDGET_OVER_PATTERNS:
+        match = re.search(pattern, raw)
+        if match:
+            min_budget = _parse_budget_amount(match.group(1), is_manwon="만" in pattern)
+            break
+
+    return min_budget, max_budget
+
+
+def _has_budget_constraint_signal(text: str | None) -> bool:
+    min_budget, max_budget = _extract_budget_constraints(text)
+    return min_budget is not None or max_budget is not None
+
+
 
 def _resolve_category_subcategory(
     *,
@@ -389,6 +432,7 @@ def classify_intent(state: ChatState) -> dict:
     prev_pet = state.get("pet_profile") or {}
     target_pet_id = state.get("target_pet_id")
     prev_last_recommended_goods_ids = list(state.get("last_recommended_goods_ids") or [])
+    prev_last_search_goods_ids = list(state.get("last_search_goods_ids") or [])
     pending_requests = list(state.get("pending_requests") or [])
     decomposed_tasks = list(state.get("decomposed_tasks") or [])
 
@@ -476,6 +520,15 @@ def classify_intent(state: ChatState) -> dict:
     ):
         exclude_keywords = _extract_exclusion_keywords_from_text(original_user_input)
 
+    parsed_min_budget, parsed_max_budget = _extract_budget_constraints(original_user_input)
+    if (
+        not is_result_refinement
+        and prev_last_search_goods_ids
+        and _has_budget_constraint_signal(original_user_input)
+        and _has_recommendation_signal(original_user_input)
+    ):
+        is_result_refinement = True
+
     if new_decomposed_tasks:
         logger.info("─── Query Decomposition Detected ───")
         for i, task in enumerate(new_decomposed_tasks):
@@ -538,6 +591,9 @@ def classify_intent(state: ChatState) -> dict:
         or exclude_keywords
         or result.get("subcategory")
         or result.get("budget")
+        or result.get("min_budget")
+        or parsed_min_budget is not None
+        or parsed_max_budget is not None
         or is_result_refinement
         or is_alternative_request
     )
@@ -828,7 +884,8 @@ def classify_intent(state: ChatState) -> dict:
         "intents": new_intents,
         "target_pet_id": target_pet_id,
         "last_recommended_goods_ids": prev_last_recommended_goods_ids,
-        "allowed_goods_ids": prev_last_recommended_goods_ids if is_result_refinement else [],
+        "last_search_goods_ids": prev_last_search_goods_ids,
+        "allowed_goods_ids": prev_last_search_goods_ids if is_result_refinement else [],
         "pending_requests": pending_requests,
         "decomposed_tasks": decomposed_tasks,
         "new_decomposed_tasks": new_decomposed_tasks,
@@ -838,7 +895,24 @@ def classify_intent(state: ChatState) -> dict:
         "switched_pet_name": switched_pet_name,
         "domain_intent": result.get("domain_intent") or state.get("domain_intent"),
         "detected_aspect": result.get("detected_aspect") or state.get("detected_aspect"),
-        "budget": int(result["budget"]) if result.get("budget") else state.get("budget"),
+        "budget": (
+            int(result["budget"])
+            if result.get("budget")
+            else parsed_max_budget
+            if parsed_max_budget is not None
+            else state.get("budget")
+            if is_result_refinement
+            else None
+        ),
+        "min_budget": (
+            int(result["min_budget"])
+            if result.get("min_budget")
+            else parsed_min_budget
+            if parsed_min_budget is not None
+            else state.get("min_budget")
+            if is_result_refinement
+            else None
+        ),
         "filters": build_search_filters(
             pet_type=new_filters.get("pet_type"),
             category=new_filters.get("category"),

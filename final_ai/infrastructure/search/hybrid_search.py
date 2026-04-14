@@ -117,6 +117,7 @@ def hybrid_search_pg(
     exclude_subcategories: str | list[str] | None = None,
     exclude_health_concerns: str | list[str] | None = None,
     exclude_goods_ids: str | list[str] | None = None,
+    min_budget: int | None = None,
     budget: int | None = None,
     allowed_goods_ids: list[str] | None = None,
 ) -> list[dict]:
@@ -168,6 +169,7 @@ def hybrid_search_pg(
             exclude_subcategories=exclude_subcategories,
             exclude_health_concerns=exclude_health_concerns,
             exclude_goods_ids=exclude_goods_ids,
+            min_budget=min_budget,
             budget=budget,
             allowed_goods_ids=allowed_goods_ids,
         )

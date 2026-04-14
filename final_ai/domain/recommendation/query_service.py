@@ -34,6 +34,44 @@ def _sanitize_refinement_query(raw_query: str, exclusions: dict[str, list[str]])
     for token in ("제외", "빼고", "빼줘", "말고", "삭제", "제거", "없는", "다른 거", "다른걸로", "다른상품"):
         sanitized = sanitized.replace(token, " ")
 
+    for pattern in (
+        r"\d+(?:\.\d+)?\s*만\s*원?\s*(?:이하|미만|까지|안쪽|선|이상|초과|넘는|부터)",
+        r"\d+(?:\.\d+)?\s*원\s*(?:이하|미만|까지|안쪽|선|이상|초과|넘는|부터)",
+    ):
+        sanitized = re.sub(pattern, " ", sanitized, flags=re.IGNORECASE)
+
+    for token in (
+        "이중에서",
+        "이중",
+        "그중에서",
+        "그중",
+        "추천된 것 중",
+        "추천된것중",
+        "추천해준 것 중",
+        "추천해준것중",
+        "방금 추천한 것 중",
+        "방금추천한것중",
+        "보여줘",
+        "보여주세요",
+        "추천된",
+        "추천해준",
+        "방금",
+        "제품들",
+        "제품",
+        "상품들",
+        "상품",
+        "것들",
+        "것",
+        "중",
+        "만",
+        "가격",
+        "이하",
+        "이상",
+        "미만",
+        "초과",
+    ):
+        sanitized = sanitized.replace(token, " ")
+
     sanitized = re.sub(r"\s+", " ", sanitized).strip()
     return sanitized
 

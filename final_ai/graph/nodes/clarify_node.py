@@ -14,6 +14,36 @@ with open(CATEGORY_FILE, encoding="utf-8") as file:
     CATEGORIES = json.load(file)
 
 
+def _topic_object_phrase(noun: str, suffix: str) -> str:
+    text = str(noun or "").strip()
+    if not text:
+        return suffix
+    last_char = text[-1]
+    if not ("가" <= last_char <= "힣"):
+        return f"{text}{suffix}"
+    has_batchim = (ord(last_char) - ord("가")) % 28 != 0
+    particle = "을" if has_batchim else "를"
+    return f"{text}{particle}"
+
+
+def _fallback_category_from_text(text: str | None) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    best_match = None
+    best_len = 0
+    for pet_category_map in CATEGORIES.values():
+        for category_name, category_info in pet_category_map.items():
+            targets = [category_name, *(category_info.get("aliases") or [])]
+            for target in targets:
+                if target and target in raw and len(target) > best_len:
+                    best_match = category_name
+                    best_len = len(target)
+
+    return best_match
+
+
 @traceable(name="clarify_node", run_type="chain")
 def clarify_node(state: ChatState) -> dict:
     intents = state.get("intents") or []
@@ -33,6 +63,8 @@ def clarify_node(state: ChatState) -> dict:
 
     current_pet_type = pet_type_detected or pet_species_kr
     category = filters.get("category")
+    fallback_category = _fallback_category_from_text(state.get("user_input"))
+    resolved_category = category or fallback_category
     
     # 추천 관련 의도인지 확인
     is_recommend_flow = "recommend" in intents or "popularity" in intents
@@ -40,15 +72,21 @@ def clarify_node(state: ChatState) -> dict:
 
     # 1. 반려동물 종류(강아지/고양이) 정보가 없는 경우
     if is_recommend_flow and not current_pet_type:
-        question = f"반려동물을 위한{pop_str}을 찾으시는군요! 어떤 반려동물(강아지/고양이)을 위한 상품인가요?"
+        if resolved_category:
+            category_text = _topic_object_phrase(f"{resolved_category}{pop_str}", "을")
+            question = f"{category_text} 찾으시는군요! 어떤 반려동물(강아지/고양이)을 위한 상품인가요?"
+        else:
+            question = "어떤 제품을 찾으시나요? 어떤 반려동물(강아지/고양이)을 위한 상품인가요?"
         
     # 2. 카테고리(사료, 간식 등) 정보가 없는 경우
     elif is_recommend_flow and not category:
-        pet_text = f"{current_pet_type}를 위한" if current_pet_type else "반려동물을 위한"
-        if current_pet_type == "강아지":
-            question = f"{pet_text} 어떤{pop_str}을 찾으시나요? (사료, 간식, 용품, 배변용품, 덴탈관)"
-        else:    
-            question = f"{pet_text} 어떤{pop_str}을 찾으시나요? (사료, 간식, 용품, 모래, 습식관)"
+        if fallback_category and current_pet_type:
+            category_text = _topic_object_phrase(f"{fallback_category}{pop_str}", "을")
+            question = f"{current_pet_type}를 위한 {category_text} 찾으시는군요. 예산이나 원하는 조건이 있을까요?"
+        elif current_pet_type:
+            question = "어떤 제품을 찾으시나요?"
+        else:
+            question = "어떤 제품을 찾으시나요?"
 
     # 3. 그 외 기본 안내
     else:
