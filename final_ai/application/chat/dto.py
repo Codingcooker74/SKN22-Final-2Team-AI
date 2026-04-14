@@ -82,6 +82,7 @@ def build_chat_execution_request(req: ChatRequest) -> ChatExecutionRequest:
         "relaxed_filters": [],
         "candidate_count_by_stage": {},
         "filters": normalize_search_filters(dialog_state.get("filters")),
+        "response_mode": "",
     }
     return ChatExecutionRequest(
         initial_state=initial_state,

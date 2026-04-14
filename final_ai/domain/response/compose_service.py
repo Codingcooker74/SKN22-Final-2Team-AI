@@ -8,7 +8,7 @@ from final_ai.domain.profile.service import (
     get_user_pets,
     translate_health_concerns,
 )
-from final_ai.domain.response.prompts import RESPOND_SYSTEM
+from final_ai.domain.response.prompts import select_respond_system_prompt
 from final_ai.infrastructure.llm.openai_client import LLM_MODEL, llm
 from final_ai.infrastructure.observability import get_logger
 from final_ai.graph.state import ChatState
@@ -69,6 +69,7 @@ def _build_user_message(
     pet_context: str,
     context_block: str,
     pending_info: list[dict],
+    response_mode: str,
     memory_summary: str,
     summary_candidates_text: str,
     conversation_history_text: str,
@@ -89,6 +90,10 @@ def _build_user_message(
 
     return (
         "현재 상황 정보:\n"
+        f"- 응답 모드: {response_mode}\n"
+        f"- intent 목록: {', '.join(state.get('intents') or []) or '없음'}\n"
+        f"- 추천 상품 후보 있음: {'YES' if state.get('reranked_results') else 'NO'}\n"
+        f"- 도메인 지식 있음: {'YES' if state.get('domain_contexts') else 'NO'}\n"
         f"- 펫 이름: {pet_name}\n"
         f"- 펫 전환 발생: {'YES' if state.get('is_pet_switched') else 'NO'}\n"
         f"- 전환된 펫 이름: {state.get('switched_pet_name') or 'N/A'}\n"
@@ -112,9 +117,12 @@ def _build_fallback_response(
     category: str,
     reranked_results: list[dict],
     domain_contexts: list[str],
+    response_mode: str,
     error: Exception,
 ) -> str:
-    if reranked_results:
+    if response_mode == "domain_qa":
+        response = "관련 정보를 찾았지만 답변 생성 중 문제가 발생했습니다. 초콜릿 섭취나 독성 의심처럼 긴급할 수 있는 상황이라면 즉시 동물병원에 연락해 주세요."
+    elif reranked_results:
         response = f"{pet_name}에 어울리는 {category} 후보를 찾았어요.\n\n추천 상품을 확인해 주세요!"
     elif domain_contexts:
         response = "관련 정보를 찾았지만 답변 생성 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요."
@@ -134,6 +142,7 @@ def build_response_state(state: ChatState) -> dict:
 
     domain_contexts = state.get("domain_contexts") or []
     reranked_results = state.get("reranked_results") or []
+    response_mode = state.get("response_mode") or "empty"
     pet_context = build_pet_context(state)
     health_concerns = state.get("health_concerns") or []
 
@@ -160,17 +169,19 @@ def build_response_state(state: ChatState) -> dict:
         pet_context=pet_context,
         context_block=context_block,
         pending_info=pending_info,
+        response_mode=response_mode,
         memory_summary=(state.get("memory_summary") or "").strip(),
         summary_candidates_text=summary_candidates_text,
         conversation_history_text=conversation_history_text,
     )
+    system_prompt = select_respond_system_prompt(response_mode)
 
     try:
         ensure_request_active()
         response = llm.chat.completions.create(
             model=LLM_MODEL,
             messages=[
-                {"role": "system", "content": RESPOND_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             temperature=0,
@@ -181,6 +192,7 @@ def build_response_state(state: ChatState) -> dict:
             category=category,
             reranked_results=reranked_results,
             domain_contexts=domain_contexts,
+            response_mode=response_mode,
             error=exc,
         )
 
