@@ -226,7 +226,7 @@ jobs:
           mkdir -p .deploy-fastapi
           python3 - <<'PY'
           from pathlib import Path
-          src = Path("deploy/eb/test-fastapi/docker-compose.yml").read_text()
+          src = Path("deploy/eb/deploy-fastapi/docker-compose.yml").read_text()
           image = "${{ env.FASTAPI_IMAGE_REPO }}:${{ steps.fastapi-meta.outputs.short_sha }}"
           Path(".deploy-fastapi/docker-compose.yml").write_text(
               src.replace("__FASTAPI_IMAGE__", image)
@@ -255,7 +255,7 @@ jobs:
           FASTAPI_UVICORN_WORKERS=1
           EOF
           docker compose -f .deploy-fastapi/docker-compose.yml --env-file .deploy-fastapi/.env.check config -q
-          cp -r deploy/eb/test-fastapi/.platform .deploy-fastapi/.platform
+          cp -r deploy/eb/deploy-fastapi/.platform .deploy-fastapi/.platform
           cd .deploy-fastapi
           zip -r ../fastapi-deploy.zip docker-compose.yml .platform
 
