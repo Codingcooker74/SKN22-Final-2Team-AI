@@ -5,6 +5,7 @@ from final_ai.contracts.filters import normalize_search_filters
 from final_ai.graph.nodes import (
     clarify_node,
     general_node,
+    guardrail_node,
     intent_node,
     merge_node,
     profile_node,
@@ -85,9 +86,16 @@ def route_profile_node(state: ChatState) -> str:
     return "query"
 
 
+def route_guardrail(state: ChatState) -> str:
+    if state.get("guardrail_blocked"):
+        return "blocked"
+    return "allowed"
+
+
 def build_graph(checkpointer=None):
     graph_builder = StateGraph(ChatState)
 
+    graph_builder.add_node("guardrail", guardrail_node)
     graph_builder.add_node("intent", intent_node)
     graph_builder.add_node("clarify", clarify_node)
     graph_builder.add_node("general", general_node)
@@ -99,7 +107,16 @@ def build_graph(checkpointer=None):
     graph_builder.add_node("merge", merge_node)
     graph_builder.add_node("respond", respond_node)
 
-    graph_builder.add_edge(START, "intent")
+    graph_builder.add_edge(START, "guardrail")
+
+    graph_builder.add_conditional_edges(
+        "guardrail",
+        route_guardrail,
+        {
+            "blocked": END,
+            "allowed": "intent",
+        },
+    )
 
     graph_builder.add_conditional_edges(
         "intent",
@@ -202,6 +219,8 @@ def chat(
         "is_pet_override": False,
         "is_result_refinement": False,
         "pet_mismatch": False,
+        "guardrail_blocked": False,
+        "guardrail_reason": "",
     }
     result = graph.invoke(initial_state, config=config)
     return {

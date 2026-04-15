@@ -67,3 +67,5 @@ class ChatState(TypedDict):
     response_mode: str
     response: str
     product_cards: list[dict]
+    guardrail_blocked: bool
+    guardrail_reason: str

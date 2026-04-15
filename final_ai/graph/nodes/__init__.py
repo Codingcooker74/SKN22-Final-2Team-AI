@@ -1,5 +1,6 @@
 from .clarify_node import clarify_node
 from .general_node import general_node
+from .guardrail_node import guardrail_node
 from .intent_node import intent_node
 from .merge_node import merge_node
 from .profile_node import profile_node
@@ -12,6 +13,7 @@ from .search_node import search_node
 __all__ = [
     "clarify_node",
     "general_node",
+    "guardrail_node",
     "intent_node",
     "merge_node",
     "profile_node",
