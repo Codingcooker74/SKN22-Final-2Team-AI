@@ -8,6 +8,7 @@ from final_ai.domain.recommendation.filter_relaxation import (
     should_retry_recommendation,
     target_recommendation_count,
 )
+from final_ai.domain.recommendation.product_name_guard import filter_pet_type_name_conflicts
 from final_ai.domain.recommendation.product_intent import candidate_matches_requested_terms
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
@@ -123,6 +124,8 @@ def _apply_refinement_sort(
 
 def rerank_search_results(state: ChatState) -> dict:
     candidates = state.get("search_results") or []
+    filters = state.get("effective_filters") or state.get("filters") or {}
+    candidates = filter_pet_type_name_conflicts(candidates, target_pet_type=filters.get("pet_type"))
     detected_aspect = state.get("detected_aspect")
     intents = state.get("intents") or []
     relaxation = clamp_relaxation_count(state.get("filter_relaxation_count", 0))

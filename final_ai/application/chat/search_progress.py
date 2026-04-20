@@ -1,6 +1,24 @@
 from final_ai.contracts.filters import normalize_search_exclusions, normalize_search_filters
 
 
+def _has_final_consonant(text: str) -> bool:
+    if not text:
+        return False
+    last = text[-1]
+    code = ord(last)
+    if 0xAC00 <= code <= 0xD7A3:
+        return (code - 0xAC00) % 28 != 0
+    return False
+
+
+def _with_particle(text: str, consonant_particle: str, vowel_particle: str) -> str:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return ""
+    particle = consonant_particle if _has_final_consonant(normalized) else vowel_particle
+    return f"{normalized}{particle}"
+
+
 def _unique(values: list[str]) -> list[str]:
     result = []
     seen = set()
@@ -50,6 +68,10 @@ def _profile_phrase(state: dict) -> str:
     pet_profile = state.get("pet_profile") or {}
     filters = normalize_search_filters(state.get("filters") or state.get("effective_filters"))
 
+    name = str(pet_profile.get("name") or pet_profile.get("pet_name") or "").strip()
+    if name:
+        return name
+
     species = _species_label(filters.get("pet_type") or pet_profile.get("species"))
     breed = str(pet_profile.get("breed") or "").strip()
     age = _format_age(pet_profile.get("age"))
@@ -87,11 +109,12 @@ def build_search_progress_messages(state: dict) -> list[str]:
     target = _target_phrase(state)
     messages = []
 
+    target_object = _with_particle(target, "을", "를") or "상품을"
     if excluded_ingredients:
         ingredient_label = ", ".join(excluded_ingredients)
-        messages.append(f"{profile}의 {ingredient_label} 없는 {target}를 찾아보는 중...")
+        messages.append(f"{profile} 맞춤 {ingredient_label} 없는 {target_object} 찾아보는 중...")
     else:
-        messages.append(f"{profile}에게 맞는 {target}를 찾아보는 중...")
+        messages.append(f"{profile} 맞춤 {target_object} 찾아보는 중...")
 
     budget_label = _format_price(state.get("budget"))
     min_budget_label = _format_price(state.get("min_budget"))

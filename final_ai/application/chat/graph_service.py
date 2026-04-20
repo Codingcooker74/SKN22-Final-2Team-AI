@@ -29,6 +29,7 @@ def invoke_chat_graph(
 ) -> dict:
     graph = get_chat_graph()
     final_state = {}
+    running_state = dict(initial_state)
     WIDTH = 70
     emitted_search_progress = False
 
@@ -45,7 +46,7 @@ def invoke_chat_graph(
     for event in graph.stream(initial_state, config=config, stream_mode="updates"):
         for node_name, updates in event.items():
             _pretty_print(f"  ──▶ [NODE: {node_name.upper()}] 완료")
-            next_state = {**final_state, **updates}
+            next_state = {**running_state, **updates}
             
             # 출력할 주요 데이터
             if "intents" in updates:
@@ -81,6 +82,7 @@ def invoke_chat_graph(
                 emitted_search_progress = True
 
             final_state.update(updates)
+            running_state.update(updates)
 
     # 종료 알림 박스
     _pretty_print("┏" + "━" * (WIDTH - 2) + "┓")

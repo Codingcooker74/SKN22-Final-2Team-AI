@@ -74,7 +74,7 @@ async def stream_chat_events(req: ChatRequest, request: Request) -> AsyncIterato
     pet_name = get_pet_name_for_user(req.user_id, req.target_pet_id) or "반려동물"
     category = _infer_category(req.message)
     logger.info("chat stream started", extra=log_extra)
-    yield "info", {"content": f"{pet_name}에 어울리는 {category} 조건을 확인하는 중입니다..."}
+    yield "info", {"content": f"{pet_name} 맞춤 {category} 조건을 확인하는 중입니다..."}
 
     cancel_event = threading.Event()
     progress_queue: asyncio.Queue[tuple[ChatEventType, dict]] = asyncio.Queue()

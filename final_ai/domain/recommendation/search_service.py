@@ -24,6 +24,7 @@ from final_ai.domain.recommendation.filter_relaxation import (
     should_include_health_concerns,
     should_include_profile_hints,
 )
+from final_ai.domain.recommendation.product_name_guard import filter_pet_type_name_conflicts
 from final_ai.domain.recommendation.product_intent import candidate_matches_requested_terms
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
@@ -398,6 +399,14 @@ def execute_search_state(state: ChatState) -> dict:
         for candidate in candidates
         if not _is_excluded_candidate(candidate, exclusions=exclusions)
     ]
+    before_pet_type_name_guard = len(candidates)
+    candidates = filter_pet_type_name_conflicts(candidates, target_pet_type=pet_type_kr)
+    if len(candidates) != before_pet_type_name_guard:
+        logger.info(
+            "pet type name guard filtered=%s target_pet_type=%s",
+            before_pet_type_name_guard - len(candidates),
+            pet_type_kr,
+        )
     logger.debug("blacklist filter count=%s", len(candidates))
 
     target_age_group = state.get("age_group", "어덜트")
