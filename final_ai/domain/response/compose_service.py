@@ -213,10 +213,10 @@ def _build_fallback_response(
     if response_mode == "domain_qa":
         response = "관련 정보를 찾았지만 답변 생성 중 문제가 발생했습니다. 초콜릿 섭취나 독성 의심처럼 긴급할 수 있는 상황이라면 즉시 동물병원에 연락해 주세요."
     elif reranked_results:
-        response = f"{pet_name}에 어울리는 {category} 후보를 찾았어요.\n\n추천 상품을 확인해 주세요!"
+        response = f"{pet_name} 맞춤 {category} 후보를 찾았어요.\n\n추천 상품을 확인해 주세요!"
         if recommendation_shortage_note:
             response = (
-                f"{pet_name}에 어울리는 {category} 후보를 찾았어요.\n\n"
+                f"{pet_name} 맞춤 {category} 후보를 찾았어요.\n\n"
                 f"{recommendation_shortage_note.split('라고 안내하세요.')[0]}.\n\n"
                 "추천 상품을 확인해 주세요!"
             )
