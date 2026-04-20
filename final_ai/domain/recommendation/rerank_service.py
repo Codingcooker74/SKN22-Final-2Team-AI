@@ -8,6 +8,7 @@ from final_ai.domain.recommendation.filter_relaxation import (
     should_retry_recommendation,
     target_recommendation_count,
 )
+from final_ai.domain.recommendation.product_intent import candidate_matches_requested_terms
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
 
@@ -16,6 +17,7 @@ BETA = 0.25
 GAMMA = 0.15
 DELTA = 0.10
 EPSILON = 0.10
+REQUESTED_PRODUCT_MATCH_BONUS = 1.25
 TOP_K = RECOMMENDATION_TOP_K
 logger = get_logger(__name__)
 
@@ -127,6 +129,7 @@ def rerank_search_results(state: ChatState) -> dict:
     refinement_sort = state.get("refinement_sort")
     target_count = target_recommendation_count(state)
     best_results = list(state.get("best_reranked_results") or [])
+    requested_product_terms = list(state.get("requested_product_terms") or [])
 
     if not candidates:
         final_results = _choose_best_results([], best_results, target_count=target_count)
@@ -208,6 +211,12 @@ def rerank_search_results(state: ChatState) -> dict:
             trait_keywords = [keyword for keyword in HEALTH_TRAIT_KEYWORDS if keyword in health_traits]
             if any(keyword in product_tags for keyword in trait_keywords):
                 score += 0.10
+
+        requested_product_match = bool(candidate.get("_requested_product_match")) or (
+            candidate_matches_requested_terms(candidate, requested_product_terms)
+        )
+        if requested_product_match:
+            score += REQUESTED_PRODUCT_MATCH_BONUS
 
         scored.append((score, candidate))
 

@@ -24,9 +24,10 @@ from final_ai.domain.recommendation.filter_relaxation import (
     should_include_health_concerns,
     should_include_profile_hints,
 )
+from final_ai.domain.recommendation.product_intent import candidate_matches_requested_terms
 from final_ai.graph.state import ChatState
 from final_ai.infrastructure.observability import get_logger
-from final_ai.infrastructure.repositories.product_repository import list_gp_products
+from final_ai.infrastructure.repositories.product_repository import list_products
 from final_ai.infrastructure.search.hybrid_search import hybrid_search_pg, normalize_pet_species
 
 logger = get_logger(__name__)
@@ -106,6 +107,83 @@ def _matches_budget(candidate: dict, *, min_budget: int | None, budget: int | No
     if budget is not None and effective_price > float(budget):
         return False
     return True
+
+
+def _merge_candidates(*candidate_groups: list[dict]) -> list[dict]:
+    merged = []
+    seen = set()
+    for candidates in candidate_groups:
+        for candidate in candidates:
+            goods_id = candidate.get("goods_id")
+            dedupe_key = str(goods_id) if goods_id is not None else id(candidate)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            merged.append(dict(candidate))
+    return merged
+
+
+def _load_requested_product_candidates(
+    *,
+    requested_product_terms: list[str],
+    pet_type: str | None,
+    category: str | None,
+    subcategory: str | None,
+    brand: str | None,
+    budget: int | None,
+) -> list[dict]:
+    if not requested_product_terms:
+        return []
+
+    strict_candidates = []
+    for term in requested_product_terms:
+        offset = 0
+        page_size = 100
+        while True:
+            page = list_products(
+                pet_type=pet_type,
+                category=category,
+                subcategory=subcategory,
+                brand=brand,
+                budget=budget,
+                query=term,
+                include_soldout=False,
+                limit=page_size,
+                offset=offset,
+            )
+            if not page:
+                break
+            strict_candidates.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+    return strict_candidates
+
+
+def _prioritize_requested_product_candidates(
+    candidates: list[dict],
+    requested_product_terms: list[str],
+    *,
+    target_count: int,
+) -> tuple[list[dict], int, int]:
+    if not requested_product_terms:
+        return candidates, 0, len(candidates)
+
+    strict_candidates = []
+    relaxed_candidates = []
+    for candidate in candidates:
+        candidate_with_flag = dict(candidate)
+        is_match = candidate_matches_requested_terms(candidate_with_flag, requested_product_terms)
+        candidate_with_flag["_requested_product_match"] = is_match
+        candidate_with_flag["_requested_product_terms"] = requested_product_terms
+        if is_match:
+            strict_candidates.append(candidate_with_flag)
+        else:
+            relaxed_candidates.append(candidate_with_flag)
+
+    if len(strict_candidates) >= target_count:
+        return strict_candidates, len(strict_candidates), len(relaxed_candidates)
+    return strict_candidates + relaxed_candidates, len(strict_candidates), len(relaxed_candidates)
 
 
 def _to_normalized_list(raw) -> list[str]:
@@ -251,6 +329,7 @@ def execute_search_state(state: ChatState) -> dict:
     budget = state.get("budget")
     health_concerns = normalize_health_concerns(state.get("health_concerns") or [])
     search_health_concerns = health_concerns if should_include_health_concerns(relaxation) else []
+    requested_product_terms = list(state.get("requested_product_terms") or [])
     allowed_goods_ids = list(state.get("allowed_goods_ids") or [])
     if not allowed_goods_ids and state.get("is_result_refinement"):
         allowed_goods_ids = list(state.get("last_search_goods_ids") or [])
@@ -276,6 +355,15 @@ def execute_search_state(state: ChatState) -> dict:
         budget=budget,
         allowed_goods_ids=allowed_goods_ids,
     )
+    requested_product_candidates = _load_requested_product_candidates(
+        requested_product_terms=requested_product_terms,
+        pet_type=pet_type_kr,
+        category=category,
+        subcategory=subcategory,
+        brand=brand,
+        budget=budget,
+    )
+    candidates = _merge_candidates(requested_product_candidates, candidates)
     if min_budget is not None or budget is not None:
         candidates = [
             candidate
@@ -336,9 +424,20 @@ def execute_search_state(state: ChatState) -> dict:
             forbidden_age_keywords=forbidden_age_keywords,
         )
     ]
+    target_count = int(state.get("recommendation_limit") or 5)
+    candidates, requested_product_strict_count, requested_product_relaxed_count = (
+        _prioritize_requested_product_candidates(
+            candidates,
+            requested_product_terms,
+            target_count=target_count,
+        )
+    )
 
     candidate_count_by_stage = dict(state.get("candidate_count_by_stage") or {})
     candidate_count_by_stage[str(relaxation)] = len(candidates)
+    if requested_product_terms:
+        candidate_count_by_stage[f"{relaxation}:requested_product_strict"] = requested_product_strict_count
+        candidate_count_by_stage[f"{relaxation}:requested_product_relaxed"] = requested_product_relaxed_count
     relaxed_filters = build_relaxed_filter_names(
         relaxation=relaxation,
         filters=original_filters,
@@ -348,11 +447,14 @@ def execute_search_state(state: ChatState) -> dict:
     )
 
     logger.info(
-        "search candidates=%s relaxation=%s target_age_group=%s relaxed=%s",
+        "search candidates=%s relaxation=%s target_age_group=%s relaxed=%s requested_terms=%s requested_strict=%s requested_relaxed=%s",
         len(candidates),
         relaxation,
         target_age_group,
         relaxed_filters,
+        requested_product_terms,
+        requested_product_strict_count,
+        requested_product_relaxed_count,
     )
     return {
         "search_results": candidates,
@@ -365,4 +467,7 @@ def execute_search_state(state: ChatState) -> dict:
         "effective_filters": filters,
         "relaxed_filters": relaxed_filters,
         "candidate_count_by_stage": candidate_count_by_stage,
+        "requested_product_terms": requested_product_terms,
+        "requested_product_strict_count": requested_product_strict_count,
+        "requested_product_relaxed_count": requested_product_relaxed_count,
     }

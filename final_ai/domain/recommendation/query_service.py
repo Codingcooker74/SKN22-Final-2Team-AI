@@ -12,6 +12,7 @@ from final_ai.domain.recommendation.filter_relaxation import (
     should_include_profile_hints,
     should_include_subcategory,
 )
+from final_ai.domain.recommendation.product_intent import detect_requested_product_terms
 from final_ai.domain.profile.health_concerns import normalize_health_concerns
 from final_ai.infrastructure.observability import get_logger
 from final_ai.graph.state import ChatState
@@ -131,6 +132,15 @@ def build_search_query_state(state: ChatState) -> dict:
         query_parts.append(category_hint)
     if subcategory_hint and subcategory_hint != category_hint:
         query_parts.append(subcategory_hint)
+    requested_product_terms = detect_requested_product_terms(
+        state.get("user_input"),
+        pet_type=pet_type,
+        category=category_hint,
+        subcategory=raw_sub,
+    )
+    for term in requested_product_terms:
+        if term not in query_parts:
+            query_parts.append(term)
     if brand and brand not in query_parts:
         query_parts.append(brand)
     
@@ -194,4 +204,5 @@ def build_search_query_state(state: ChatState) -> dict:
             age_group=state.get("age_group"),
             breed=raw_breed,
         ),
+        "requested_product_terms": requested_product_terms,
     }
