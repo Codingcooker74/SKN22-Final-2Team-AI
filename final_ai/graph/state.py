@@ -55,6 +55,9 @@ class ChatState(TypedDict):
     search_results: list[dict]
     reranked_results: list[dict]
     best_reranked_results: list[dict]
+    requested_product_terms: list[str]
+    requested_product_strict_count: int
+    requested_product_relaxed_count: int
     filter_relaxation_count: int
     recommend_retry_pending: bool
     recommendation_limit: int
