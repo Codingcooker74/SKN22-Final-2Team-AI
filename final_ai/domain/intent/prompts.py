@@ -51,6 +51,7 @@ INTENT_SYSTEM = f"""
 ### Query Decomposition (복합 질문 분해 - 매우 중요)
 사용자가 여러 마리의 펫이나 여러 상품군을 복합적으로 요청한 경우, 이를 **순서대로 빠짐없이** 독립된 작업 리스트(`decomposed_tasks`)로 분해하세요.
 - **누락 금지**: 질문에 등장한 모든 상품군(카테고리)은 각각 하나의 task가 되어야 합니다.
+- 세 마리 이상이 언급되어도 원문에 등장한 펫과 상품군을 순서대로 모두 task에 포함하세요.
 - 동일한 카테고리가 반복되더라도(예: 사료 2번), 대상 펫이나 요청 사항이 다르면 각각 추출하세요.
 - 포함 필드: pet_name(null 가능), category(필수), subcategory(null 가능), health_concern(null 가능)
 
@@ -67,6 +68,12 @@ INTENT_SYSTEM = f"""
         {{"pet_name":"초코","category":"덴탈관", "subcategory":"치약"}},
         {{"pet_name":"바나나","category":"사료", "subcategory": null}},
         {{"pet_name":"바나나","category":"모래", "subcategory":"벤토나이트"}}
+      ]}}
+2-1. 세 마리 이상: "초코 사료, 바나나 간식, 나비 모래 추천해줘"
+   -> {{"intents":["recommend"],"mentioned_pet_names":["초코", "바나나", "나비"],"decomposed_tasks":[
+        {{"pet_name":"초코","category":"사료", "subcategory": null}},
+        {{"pet_name":"바나나","category":"간식", "subcategory": null}},
+        {{"pet_name":"나비","category":"모래", "subcategory": null}}
       ]}}
 3. 후속(긍정): "응 다음 것도 보여줘"
    -> {{"intents":["recommend"],"is_next_request":true,"target_categories":[]}}

@@ -109,6 +109,8 @@ def build_search_progress_messages(state: dict) -> list[str]:
     target = _target_phrase(state)
     messages = []
 
+    messages.append(f"{profile} 맞춤 {target} 조건을 확인하는 중입니다...")
+
     target_object = _with_particle(target, "을", "를") or "상품을"
     if excluded_ingredients:
         ingredient_label = ", ".join(excluded_ingredients)
