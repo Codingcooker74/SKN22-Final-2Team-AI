@@ -109,7 +109,7 @@ def _build_context_block(
             f"- {sanitize_untrusted_context(product.get('brand_name'))} "
             f"{sanitize_untrusted_context(product.get('goods_name'))} | 선택 이유: "
             f"{_build_candidate_reason(product, requested_category=requested_category, translated_concerns=translated_concerns)}"
-            for product in reranked_results[:3]
+            for product in reranked_results[:5]
         )
         context_parts.append(f"[비신뢰 추천 상품 후보]\n{products_info}")
     return "\n\n".join(context_parts) if context_parts else "검색된 정보가 없습니다."
@@ -174,6 +174,13 @@ def _build_user_message(
         for item in pending_info
     ) if pending_info else "없음"
 
+    # 추가 필터 정보 (프롬프트에서 활용)
+    age = (state.get("pet_profile") or {}).get("age") or "N/A"
+    allergies = ", ".join(state.get("allergies") or []) or "N/A"
+    food_preferences = ", ".join(state.get("food_preferences") or []) or "N/A"
+    budget_val = state.get("budget")
+    budget_str = _format_budget_amount(budget_val) if budget_val else "N/A"
+
     return (
         "현재 상황 정보:\n"
         f"- 응답 모드: {response_mode}\n"
@@ -181,6 +188,10 @@ def _build_user_message(
         f"- 추천 상품 후보 있음: {'YES' if state.get('reranked_results') else 'NO'}\n"
         f"- 도메인 지식 있음: {'YES' if state.get('domain_contexts') else 'NO'}\n"
         f"- 펫 이름: {pet_name}\n"
+        f"- 나이: {age}\n"
+        f"- 알러지/제외성분: {allergies}\n"
+        f"- 선호 제형: {food_preferences}\n"
+        f"- 예산 범위: {budget_str}\n"
         f"- 펫 전환 발생: {'YES' if state.get('is_pet_switched') else 'NO'}\n"
         f"- 전환된 펫 이름: {state.get('switched_pet_name') or 'N/A'}\n"
         f"- 대기 중인 추천 목록: {pending_desc}\n"
