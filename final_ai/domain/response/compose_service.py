@@ -1,3 +1,5 @@
+import re
+
 from langchain_core.messages import AIMessage
 
 from final_ai.api.dependencies.request_context import ensure_request_active
@@ -15,6 +17,10 @@ from final_ai.infrastructure.observability import get_logger
 from final_ai.graph.state import ChatState
 
 logger = get_logger(__name__)
+
+_GENERIC_PENDING_FOLLOWUP_PATTERN = re.compile(
+    r"\n{0,2}(?:이어서\s*)?(?:다른|나머지)?\s*추천\s*상품도\s*(?:바로\s*)?보여드릴까요\?\s*$"
+)
 
 
 def _format_budget_amount(amount: int | None) -> str | None:
@@ -211,6 +217,40 @@ def _build_user_message(
     )
 
 
+def _build_pending_followup_question(pending_info: list[dict]) -> str:
+    if not pending_info:
+        return ""
+
+    next_item = pending_info[0]
+    pet_name = str(next_item.get("pet_name") or "").strip()
+    category = str(next_item.get("category") or "상품").strip() or "상품"
+
+    if pet_name:
+        target = f"{pet_name}의 {category}"
+    else:
+        target = f"나머지 {category}"
+    return f"이어서 {target} 추천 상품도 보여드릴까요?"
+
+
+def _append_pending_followup(response: str, pending_info: list[dict], *, response_mode: str) -> str:
+    if response_mode not in {"recommend", "combined"}:
+        return response
+
+    question = _build_pending_followup_question(pending_info)
+    if not question:
+        return _GENERIC_PENDING_FOLLOWUP_PATTERN.sub("", response.rstrip()).rstrip()
+
+    normalized_response = response.replace(" ", "")
+    normalized_question = question.replace(" ", "")
+    if normalized_question in normalized_response:
+        return response
+
+    if _GENERIC_PENDING_FOLLOWUP_PATTERN.search(response):
+        return _GENERIC_PENDING_FOLLOWUP_PATTERN.sub(f"\n\n{question}", response.rstrip())
+
+    return f"{response.rstrip()}\n\n{question}"
+
+
 def _build_fallback_response(
     *,
     pet_name: str,
@@ -310,6 +350,8 @@ def build_response_state(state: ChatState) -> dict:
             error=exc,
             recommendation_shortage_note=recommendation_shortage_note,
         )
+
+    response = _append_pending_followup(response, pending_info, response_mode=response_mode)
 
     output_decision = check_output_guardrail(response)
     if output_decision.blocked:

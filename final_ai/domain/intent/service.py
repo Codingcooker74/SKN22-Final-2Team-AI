@@ -76,6 +76,30 @@ _RECOMMENDATION_SIGNAL_TOKENS = (
     "골라주세요",
 )
 
+_NEXT_QUEUE_EXACT_TOKENS = (
+    "응",
+    "ㅇㅇ",
+    "엉",
+    "네",
+    "예",
+    "좋아",
+    "그래",
+    "보여줘",
+    "보여주세요",
+    "추천해줘",
+    "추천해주세요",
+)
+
+_NEXT_QUEUE_PHRASE_TOKENS = (
+    "다음",
+    "다음거",
+    "다음것",
+    "다음꺼",
+    "이어서",
+    "계속",
+    "다른카테고리",
+)
+
 _BUDGET_UNDER_PATTERNS = (
     r"(\d+(?:\.\d+)?)\s*만\s*원?\s*(?:이하|미만|까지|안쪽|선)",
     r"(\d+(?:\.\d+)?)\s*원\s*(?:이하|미만|까지|안쪽|선)",
@@ -131,6 +155,17 @@ def _has_recommendation_signal(text: str | None) -> bool:
     if not normalized:
         return False
     return any(token in normalized for token in _RECOMMENDATION_SIGNAL_TOKENS)
+
+
+def _is_next_queue_request(text: str | None, *, has_pending_queue: bool) -> bool:
+    if not has_pending_queue:
+        return False
+    normalized = _normalize_compact_text(text)
+    if not normalized:
+        return False
+    if normalized in _NEXT_QUEUE_EXACT_TOKENS:
+        return True
+    return any(token in normalized for token in _NEXT_QUEUE_PHRASE_TOKENS)
 
 
 def _is_alternative_recommendation_request(
@@ -369,6 +404,159 @@ def _resolve_category_subcategory_any_pet(
     return best_cat, best_sub
 
 
+def _extract_ordered_pet_mentions(text: str, user_pets: list[dict]) -> list[dict]:
+    mentions: list[dict] = []
+    for pet in user_pets:
+        name = str(pet.get("name") or "").strip()
+        if not name:
+            continue
+        for match in re.finditer(re.escape(name), text):
+            mentions.append({"name": name, "pet_id": pet.get("pet_id"), "pos": match.start()})
+
+    mentions.sort(key=lambda item: item["pos"])
+    ordered: list[dict] = []
+    seen: set[str] = set()
+    for mention in mentions:
+        if mention["name"] in seen:
+            continue
+        seen.add(mention["name"])
+        ordered.append(mention)
+    return ordered
+
+
+def _extract_ordered_category_mentions(text: str) -> list[dict]:
+    candidates: list[tuple[str, str, str | None]] = []
+    seen_tokens: set[str] = set()
+
+    def add_candidate(token: str | None, category: str, subcategory: str | None) -> None:
+        normalized = str(token or "").strip()
+        if not normalized or normalized in seen_tokens:
+            return
+        seen_tokens.add(normalized)
+        candidates.append((normalized, category, subcategory))
+
+    for pet_categories in CATEGORIES.values():
+        for category, category_info in pet_categories.items():
+            add_candidate(category, category, None)
+            for subcategory, aliases in category_info.get("subcategories", {}).items():
+                add_candidate(subcategory, category, subcategory)
+                for alias in aliases:
+                    add_candidate(alias, category, subcategory)
+
+    raw_matches: list[dict] = []
+    for token, category, subcategory in candidates:
+        for match in re.finditer(re.escape(token), text):
+            raw_matches.append(
+                {
+                    "category": category,
+                    "subcategory": subcategory,
+                    "pos": match.start(),
+                    "end": match.end(),
+                    "length": len(token),
+                }
+            )
+
+    raw_matches.sort(key=lambda item: (item["pos"], -item["length"]))
+    accepted: list[dict] = []
+    occupied: list[tuple[int, int]] = []
+    for item in raw_matches:
+        span = (item["pos"], item["end"])
+        if any(span[0] < used_end and used_start < span[1] for used_start, used_end in occupied):
+            continue
+        occupied.append(span)
+        accepted.append(item)
+
+    accepted.sort(key=lambda item: item["pos"])
+    return accepted
+
+
+def _build_decomposed_tasks_from_input(text: str, user_pets: list[dict]) -> list[dict]:
+    pet_mentions = _extract_ordered_pet_mentions(text, user_pets)
+    category_mentions = _extract_ordered_category_mentions(text)
+    if not category_mentions:
+        return []
+
+    if len(pet_mentions) > 1 and len(category_mentions) == 1:
+        category = category_mentions[0]
+        return [
+            {
+                "pet_name": pet["name"],
+                "category": category["category"],
+                "subcategory": category.get("subcategory"),
+            }
+            for pet in pet_mentions
+        ]
+
+    tasks: list[dict] = []
+    previous_pet: dict | None = None
+    for index, category in enumerate(category_mentions):
+        previous_boundary = category_mentions[index - 1]["end"] if index > 0 else 0
+        next_boundary = (
+            category_mentions[index + 1]["pos"]
+            if index + 1 < len(category_mentions)
+            else len(text)
+        )
+        segment_pets = [
+            pet
+            for pet in pet_mentions
+            if previous_boundary <= pet["pos"] <= category["pos"]
+        ]
+        if not segment_pets and previous_pet:
+            segment_pets = [previous_pet]
+        if not segment_pets:
+            next_pets = [
+                pet
+                for pet in pet_mentions
+                if category["pos"] < pet["pos"] < next_boundary
+            ]
+            if next_pets:
+                segment_pets = [next_pets[0]]
+        if not segment_pets:
+            segment_pets = [None]
+
+        for matched_pet in segment_pets:
+            tasks.append(
+                {
+                    "pet_name": matched_pet["name"] if matched_pet else None,
+                    "category": category["category"],
+                    "subcategory": category.get("subcategory"),
+                }
+            )
+            if matched_pet:
+                previous_pet = matched_pet
+    return tasks
+
+
+def _repair_decomposed_tasks_from_input(
+    tasks: list[dict],
+    *,
+    text: str,
+    user_pets: list[dict],
+) -> list[dict]:
+    fallback_tasks = _build_decomposed_tasks_from_input(text, user_pets)
+    if not tasks and len(fallback_tasks) < 2:
+        return tasks
+    if len(fallback_tasks) <= len(tasks):
+        return tasks
+
+    task_metadata: dict[tuple[str | None, str | None], dict] = {}
+    for task in tasks:
+        task_metadata[(task.get("pet_name"), task.get("category"))] = task
+
+    repaired: list[dict] = []
+    for fallback_task in fallback_tasks:
+        metadata = task_metadata.get((fallback_task.get("pet_name"), fallback_task.get("category"))) or {}
+        repaired_task = {**fallback_task, **{key: value for key, value in metadata.items() if value}}
+        repaired.append(repaired_task)
+
+    logger.info(
+        "Repaired decomposed_tasks from input order. llm_count=%d repaired_count=%d",
+        len(tasks),
+        len(repaired),
+    )
+    return repaired
+
+
 def _build_context(
     *,
     state: ChatState,
@@ -450,7 +638,11 @@ def classify_intent(state: ChatState) -> dict:
     )
     result = _classify_user_input(current_user_input, context)
     
-    is_next_request = result.get("is_next_request", False)
+    has_pending_queue = bool(decomposed_tasks or pending_requests)
+    is_next_request = bool(result.get("is_next_request", False)) or _is_next_queue_request(
+        current_user_input,
+        has_pending_queue=has_pending_queue,
+    )
 
     # 2. 후속 요청 처리 (Sequential Processing)
     if is_next_request and decomposed_tasks:
@@ -474,6 +666,26 @@ def classify_intent(state: ChatState) -> dict:
             "is_synthetic": True # 합성된 데이터임을 표시
         }
         current_user_input = f"{pet_name} {health} {subcategory} {category} 추천".strip()
+    elif is_next_request and pending_requests:
+        next_request = pending_requests.pop(0)
+        pet_id = str(next_request.get("pet_id") or "")
+        category = next_request.get("category") or ""
+        pet_name = ""
+        if pet_id:
+            matched_pet = next((pet for pet in user_pets if str(pet.get("pet_id")) == pet_id), None)
+            pet_name = str((matched_pet or {}).get("name") or "")
+
+        logger.info("Processing queued pending request: %s", next_request)
+        result = {
+            "intents": ["recommend"],
+            "mentioned_pet_names": [pet_name] if pet_name else [],
+            "target_categories": [category] if category else [],
+            "subcategory": next_request.get("subcategory"),
+            "health_concerns": [],
+            "is_next_request": False,
+            "is_synthetic": True,
+        }
+        current_user_input = f"{pet_name} {category} 추천".strip()
 
     new_intents = result.get("intents") or []
     mentioned_names = result.get("mentioned_pet_names") or []
@@ -506,6 +718,19 @@ def classify_intent(state: ChatState) -> dict:
             original_user_input,
             previous_goods_ids=prev_last_recommended_goods_ids,
         ) and not is_alternative_request
+
+    if (
+        not result.get("is_synthetic")
+        and _has_recommendation_signal(original_user_input)
+        and not is_result_refinement
+        and not is_alternative_request
+    ):
+        new_decomposed_tasks = _repair_decomposed_tasks_from_input(
+            new_decomposed_tasks,
+            text=original_user_input,
+            user_pets=user_pets,
+        )
+        result["decomposed_tasks"] = new_decomposed_tasks
 
     if detected_brand and _has_exclusion_signal(original_user_input):
         exclude_brands = _merge_unique_terms(exclude_brands, [detected_brand])
