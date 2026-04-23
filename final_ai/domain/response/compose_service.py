@@ -21,6 +21,8 @@ logger = get_logger(__name__)
 _GENERIC_PENDING_FOLLOWUP_PATTERN = re.compile(
     r"\n{0,2}(?:이어서\s*)?(?:다른|나머지)?\s*추천\s*상품도\s*(?:바로\s*)?보여드릴까요\?\s*$"
 )
+_RECOMMENDATION_TITLE_PATTERN = re.compile(r"^(\s*\d+\.\s+\*\*.+?\*\*)(.*)$")
+_PAREN_META_SUFFIX_PATTERN = re.compile(r"\s*\((?:⭐[^)]*|리뷰[^)]*)\)\s*$")
 
 
 def _format_budget_amount(amount: int | None) -> str | None:
@@ -29,6 +31,35 @@ def _format_budget_amount(amount: int | None) -> str | None:
     if amount % 10000 == 0:
         return f"{amount // 10000}만원"
     return f"{amount:,}원"
+
+
+def _format_product_meta_suffix(product: dict) -> str:
+    rating = product.get("rating")
+    review_count = product.get("review_count")
+
+    parts: list[str] = []
+    if rating not in (None, "", "N/A"):
+        try:
+            parts.append(f"⭐ {float(rating):.1f}")
+        except (TypeError, ValueError):
+            parts.append(f"⭐ {rating}")
+    if review_count not in (None, "", "N/A"):
+        parts.append(f"리뷰 {review_count}")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def _format_product_title(product: dict) -> str:
+    brand_name = str(product.get("brand_name") or "").strip()
+    goods_name = str(product.get("goods_name") or "").strip()
+    title = f"{brand_name} {goods_name}".strip()
+    return title or goods_name or brand_name or "추천 상품"
+
+
+def _format_rating_text(rating: object) -> str:
+    try:
+        return f"{float(rating):.1f}"
+    except (TypeError, ValueError):
+        return str(rating)
 
 
 def _build_recommendation_shortage_note(state: ChatState) -> str:
@@ -83,11 +114,11 @@ def _build_candidate_reason(
     review_count = product.get("review_count")
     rating = product.get("rating")
     if review_count and rating:
-        reasons.append(f"평점 {rating} / 리뷰 {review_count}건을 확인했어요")
+        reasons.append(f"평점 {_format_rating_text(rating)} / 리뷰 {review_count}건을 확인했어요")
     elif review_count:
         reasons.append(f"리뷰 {review_count}건이 쌓여 있어요")
     elif rating:
-        reasons.append(f"평점 {rating} 상품이에요")
+        reasons.append(f"평점 {_format_rating_text(rating)} 상품이에요")
 
     brand_name = str(product.get("brand_name") or "").strip()
     if not reasons and brand_name:
@@ -251,6 +282,37 @@ def _append_pending_followup(response: str, pending_info: list[dict], *, respons
     return f"{response.rstrip()}\n\n{question}"
 
 
+def _annotate_recommendation_titles(response: str, reranked_results: list[dict], *, response_mode: str) -> str:
+    if response_mode not in {"recommend", "combined"} or not reranked_results:
+        return response
+
+    lines = response.splitlines()
+    annotated_lines: list[str] = []
+    candidate_index = 0
+
+    for line in lines:
+        if candidate_index >= len(reranked_results):
+            annotated_lines.append(line)
+            continue
+
+        match = _RECOMMENDATION_TITLE_PATTERN.match(line)
+        if not match:
+            annotated_lines.append(line)
+            continue
+
+        prefix, suffix = match.groups()
+        product = reranked_results[candidate_index]
+        line_prefix = re.match(r"^\s*\d+\.", prefix)
+        display_prefix = line_prefix.group(0) if line_prefix else f"{candidate_index + 1}."
+        title = _format_product_title(product)
+        meta_suffix = _format_product_meta_suffix(product)
+        cleaned_suffix = _PAREN_META_SUFFIX_PATTERN.sub("", suffix or "")
+        annotated_lines.append(f"{display_prefix} **{title}**{meta_suffix}{cleaned_suffix}")
+        candidate_index += 1
+
+    return "\n".join(annotated_lines)
+
+
 def _build_fallback_response(
     *,
     pet_name: str,
@@ -351,6 +413,11 @@ def build_response_state(state: ChatState) -> dict:
             recommendation_shortage_note=recommendation_shortage_note,
         )
 
+    response = _annotate_recommendation_titles(
+        response,
+        reranked_results,
+        response_mode=response_mode,
+    )
     response = _append_pending_followup(response, pending_info, response_mode=response_mode)
 
     output_decision = check_output_guardrail(response)
