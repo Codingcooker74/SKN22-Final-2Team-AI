@@ -8,8 +8,9 @@ from final_ai.contracts.filters import (
 from final_ai.domain.recommendation.filter_relaxation import (
     build_relaxed_filter_names,
     clamp_relaxation_count,
+    should_include_age_group,
+    should_include_breed,
     should_include_health_concerns,
-    should_include_profile_hints,
     should_include_subcategory,
 )
 from final_ai.domain.recommendation.product_intent import detect_requested_product_terms
@@ -106,7 +107,7 @@ def build_search_query_state(state: ChatState) -> dict:
     
     # 품종(breed)
     raw_breed = pet_profile.get("breed") or ""
-    breed = raw_breed if should_include_profile_hints(relaxation) else ""
+    breed = raw_breed if should_include_breed(relaxation) else ""
     
     # 카테고리 / 소분류
     category_hint = filters.get("category") or ""
@@ -116,7 +117,7 @@ def build_search_query_state(state: ChatState) -> dict:
     # 건강 고민 및 연령대
     all_concerns = normalize_health_concerns(state.get("health_concerns") or [])
     concerns = all_concerns if should_include_health_concerns(relaxation) else []
-    age_group = (state.get("age_group") or "") if should_include_profile_hints(relaxation) else ""
+    age_group = (state.get("age_group") or "") if should_include_age_group(relaxation) else ""
 
     # 2. 쿼리 구성 요소 수집 (순서: 종 -> 품종 -> 카테고리 -> 소분류 -> 건강고민 -> 연령대)
     query_parts = []

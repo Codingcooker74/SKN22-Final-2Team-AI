@@ -19,12 +19,16 @@ def should_include_health_concerns(relaxation: int) -> bool:
     return clamp_relaxation_count(relaxation) < 1
 
 
-def should_include_subcategory(relaxation: int) -> bool:
+def should_include_breed(relaxation: int) -> bool:
     return clamp_relaxation_count(relaxation) < 2
 
 
-def should_include_profile_hints(relaxation: int) -> bool:
+def should_include_subcategory(relaxation: int) -> bool:
     return clamp_relaxation_count(relaxation) < 3
+
+
+def should_include_age_group(relaxation: int) -> bool:
+    return clamp_relaxation_count(relaxation) < 4
 
 
 def build_effective_search_filters(filters: dict[str, Any] | None, *, relaxation: int) -> SearchFilters:
@@ -53,12 +57,12 @@ def build_relaxed_filter_names(
 
     if count >= 1 and health_concerns:
         relaxed.append("health_concern")
-    if count >= 2 and normalized.get("subcategory"):
-        relaxed.append("subcategory")
-    if count >= 3 and age_group:
-        relaxed.append("age_group")
-    if count >= 3 and breed:
+    if count >= 2 and breed:
         relaxed.append("breed")
+    if count >= 3 and normalized.get("subcategory"):
+        relaxed.append("subcategory")
+    if count >= 4 and age_group:
+        relaxed.append("age_group")
 
     return relaxed
 
@@ -94,8 +98,9 @@ __all__ = [
     "build_relaxed_filter_names",
     "clamp_relaxation_count",
     "next_relaxation_count",
+    "should_include_age_group",
+    "should_include_breed",
     "should_include_health_concerns",
-    "should_include_profile_hints",
     "should_include_subcategory",
     "should_retry_recommendation",
     "target_recommendation_count",

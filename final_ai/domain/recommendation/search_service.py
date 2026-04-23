@@ -21,8 +21,8 @@ from final_ai.domain.recommendation.filter_relaxation import (
     build_effective_search_filters,
     build_relaxed_filter_names,
     clamp_relaxation_count,
+    should_include_age_group,
     should_include_health_concerns,
-    should_include_profile_hints,
 )
 from final_ai.domain.recommendation.product_name_guard import filter_pet_type_name_conflicts
 from final_ai.domain.recommendation.product_intent import candidate_matches_requested_terms
@@ -410,7 +410,7 @@ def execute_search_state(state: ChatState) -> dict:
     logger.debug("blacklist filter count=%s", len(candidates))
 
     target_age_group = state.get("age_group", "어덜트")
-    if not should_include_profile_hints(relaxation):
+    if not should_include_age_group(relaxation):
         target_age_group = None
     forbidden_age_keywords = AGE_EXCLUDE_KEYWORDS.get(target_age_group, []) if target_age_group else []
     mandatory_keywords = AGE_MANDATORY_KEYWORDS.get(target_age_group, []) if target_age_group else []
