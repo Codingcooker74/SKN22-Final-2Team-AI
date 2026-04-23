@@ -73,9 +73,9 @@ flowchart LR
     search --> rerank["rerank"]
     rerank -->|retry 필요| query
     rerank -->|완료| merge
-    clarify --> end([END])
+    clarify --> finish([END])
     merge --> respond["respond"]
-    respond --> end
+    respond --> finish
 ```
 
 ### 💬 채팅 흐름
