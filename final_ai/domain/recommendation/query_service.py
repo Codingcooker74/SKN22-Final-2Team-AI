@@ -71,6 +71,14 @@ def _sanitize_refinement_query(raw_query: str, exclusions: dict[str, list[str]])
         "이상",
         "미만",
         "초과",
+        "다시검색해줘",
+        "다시 검색해줘",
+        "다시검색",
+        "다시 검색",
+        "검색해줘",
+        "검색 해줘",
+        "검색",
+        "관심사",
     ):
         sanitized = sanitized.replace(token, " ")
 

@@ -13,11 +13,11 @@ def merge_node(state: ChatState) -> dict:
     has_domain = "domain_qa" in intents
     has_recommend = "recommend" in intents or "popularity" in intents
 
-    if has_domain and has_recommend:
+    if has_domain and has_recommend and domain_contexts and reranked_results:
         mode = "combined"
-    elif has_domain:
+    elif has_domain and domain_contexts:
         mode = "domain_qa"
-    elif has_recommend:
+    elif has_recommend and reranked_results:
         mode = "recommend"
     elif domain_contexts and reranked_results:
         mode = "combined"
