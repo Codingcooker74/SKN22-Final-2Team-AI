@@ -1142,7 +1142,15 @@ def classify_intent(state: ChatState) -> dict:
     combined_allergies = _merge_unique_terms(overridden_metadata.get("allergies") or state.get("allergies") or [])
 
     current_health_concerns = overridden_metadata.get("health_concerns") or state.get("health_concerns") or []
-    combined_health_concerns = _merge_unique_terms(current_health_concerns, detected_health_concerns)
+    active_excluded_health_concerns = _merge_unique_terms(
+        prev_exclusions.get("health_concerns") or [],
+        detected_excluded_health_concerns,
+    )
+    combined_health_concerns = [
+        concern
+        for concern in _merge_unique_terms(current_health_concerns, detected_health_concerns)
+        if _normalize_compact_text(concern) not in {_normalize_compact_text(item) for item in active_excluded_health_concerns}
+    ]
     base_exclusions = prev_exclusions if (is_result_refinement or is_alternative_request) else {}
     detected_exclusions = build_search_exclusions(
         brands=exclude_brands,
@@ -1157,6 +1165,14 @@ def classify_intent(state: ChatState) -> dict:
         new_filters,
         _merge_search_exclusions(base_exclusions, detected_exclusions),
     )
+    has_exclusion_filters = bool(
+        exclude_brands
+        or resolved_exclude_categories
+        or resolved_exclude_subcategories
+        or detected_excluded_health_concerns
+        or exclude_ingredients
+        or exclude_keywords
+    )
 
     return {
         "original_user_input": original_user_input,
@@ -1165,7 +1181,7 @@ def classify_intent(state: ChatState) -> dict:
         "target_pet_id": target_pet_id,
         "last_recommended_goods_ids": prev_last_recommended_goods_ids,
         "last_search_goods_ids": prev_last_search_goods_ids,
-        "allowed_goods_ids": prev_last_search_goods_ids if is_result_refinement else [],
+        "allowed_goods_ids": prev_last_search_goods_ids if (is_result_refinement and not has_exclusion_filters) else [],
         "pending_requests": pending_requests,
         "decomposed_tasks": decomposed_tasks,
         "new_decomposed_tasks": new_decomposed_tasks,
