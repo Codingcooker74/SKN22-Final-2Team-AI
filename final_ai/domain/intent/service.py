@@ -100,6 +100,22 @@ _NEXT_QUEUE_PHRASE_TOKENS = (
     "다른카테고리",
 )
 
+_NO_ADDITIONAL_CONDITION_TOKENS = (
+    "없어",
+    "없어요",
+    "없습니다",
+    "아니없어",
+    "아뇨없어",
+    "아니요없어",
+    "괜찮아",
+    "괜찮아요",
+    "상관없어",
+    "상관없어요",
+    "아무거나",
+    "딱히없어",
+    "별로없어",
+)
+
 _BUDGET_UNDER_PATTERNS = (
     r"(\d+(?:\.\d+)?)\s*만\s*원?\s*(?:이하|미만|까지|안쪽|선)",
     r"(\d+(?:\.\d+)?)\s*원\s*(?:이하|미만|까지|안쪽|선)",
@@ -166,6 +182,13 @@ def _is_next_queue_request(text: str | None, *, has_pending_queue: bool) -> bool
     if normalized in _NEXT_QUEUE_EXACT_TOKENS:
         return True
     return any(token in normalized for token in _NEXT_QUEUE_PHRASE_TOKENS)
+
+
+def _has_no_additional_condition_signal(text: str | None) -> bool:
+    normalized = _normalize_compact_text(text)
+    if not normalized:
+        return False
+    return any(token in normalized for token in _NO_ADDITIONAL_CONDITION_TOKENS)
 
 
 def _is_alternative_recommendation_request(
@@ -468,6 +491,24 @@ def _extract_ordered_category_mentions(text: str) -> list[dict]:
 
     accepted.sort(key=lambda item: item["pos"])
     return accepted
+
+
+def _fallback_category_from_text_any_pet(text: str | None) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    best_match = None
+    best_len = 0
+    for pet_category_map in CATEGORIES.values():
+        for category_name, category_info in pet_category_map.items():
+            targets = [category_name, *(category_info.get("aliases") or [])]
+            for target in targets:
+                if target and target in raw and len(target) > best_len:
+                    best_match = category_name
+                    best_len = len(target)
+
+    return best_match
 
 
 def _build_decomposed_tasks_from_input(text: str, user_pets: list[dict]) -> list[dict]:
@@ -822,8 +863,19 @@ def classify_intent(state: ChatState) -> dict:
         or is_result_refinement
         or is_alternative_request
     )
+    has_no_additional_condition = _has_no_additional_condition_signal(original_user_input)
 
     if new_intents == ["unclear"] and "recommend" in prev_intents and has_structured_followup_signal:
+        new_intents = ["recommend"]
+
+    if (
+        new_intents == ["unclear"]
+        and "recommend" in prev_intents
+        and state.get("clarification_count", 0) > 0
+        and prev_filters.get("pet_type")
+        and prev_filters.get("category")
+        and has_no_additional_condition
+    ):
         new_intents = ["recommend"]
 
     if not new_intents and "recommend" in prev_intents and is_result_refinement:
@@ -853,12 +905,15 @@ def classify_intent(state: ChatState) -> dict:
             temp_pet["species"] = "dog" if explicit_pet_type == "강아지" else "cat"
     pet_type_kr = "고양이" if (temp_pet.get("species") == "cat" or explicit_pet_type == "고양이") else "강아지"
 
+    fallback_category_any_pet = _fallback_category_from_text_any_pet(original_user_input)
     fallback_category, fallback_subcategory = _resolve_category_subcategory_any_pet(
         text_to_search=original_user_input,
         category=target_categories[0] if target_categories else None,
         subcategory=normalize_filter_value(result.get("subcategory")),
         pet_type_kr=category_lookup_pet_type,
     )
+    if not fallback_category and fallback_category_any_pet:
+        fallback_category = fallback_category_any_pet
     if not target_categories and fallback_category:
         target_categories = [fallback_category]
     if not result.get("subcategory") and fallback_subcategory:
